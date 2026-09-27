@@ -1,0 +1,16 @@
+Switch to CUDA -- Generating time went from 1hr+ -> 50s for a 50 object scene
+
+ == In between I implemented cuboids
+
+Implementing BVH -- Generating time for a 1000 object scene went from 4 minutes to 35 seconds
+
+Changing the hit function for aabb's to be branchless and not recompute inverse direction, to prevent repeated floating point division, 1000 object scene takes 7s.
+
+Replacing a loop which samples the scene with each thread doing all the samples for a single pixel. Split the work amongst several threads to prevent faster threads from having to wait for slower ones.
+Remove double-pointer indirection
+Replace curandState with unsigned int* to reduce overhead
+    7s down to 6s.
+
+
+Traversing closer child node first. Account for ray direction when deciding which aabb to check next in BVH logic. 
+    6s down to 5s
