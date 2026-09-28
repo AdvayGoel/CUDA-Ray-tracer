@@ -17,7 +17,7 @@ class quad : public hittable {
             normal = unit_vector(n);
             D = dot(normal, Q);
         }
-
+        
         HD aabb bounding_box() const override { return bbox; };
 
         // Find algorithm in Notes

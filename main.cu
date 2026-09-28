@@ -864,14 +864,14 @@ __global__ void create_primitives_kernel(
             );
             break;
 
-        case 5:
+        case 4:
             create_earth_scene(
                 d_raw_list, d_materials, d_textures, d_prototypes, d_lights,
                 d_boxes, d_obj_count, d_proto_count, d_light_count, d_scene_images
             );
             break;
 
-        case 6:
+        case 5:
             create_table_earth_scene(
                 d_raw_list, d_materials, d_textures, d_prototypes, d_lights,
                 d_boxes, d_obj_count, d_proto_count, d_light_count, d_scene_images
@@ -1081,7 +1081,7 @@ void setup_scene_snowman(SceneConfig& cfg) {
     cfg.name = "snowman";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1600;
-    cfg.samples_per_pixel = 100;
+    cfg.samples_per_pixel = 500;
     cfg.max_depth = 50;
     cfg.background = colour(0.70f, 0.80f, 1.00f);
     cfg.look_from = point3(10.0f, 3.5f, 3.5f);
@@ -1113,7 +1113,7 @@ void setup_scene_quads(SceneConfig& cfg) {
     cfg.name = "quads";
     cfg.aspect_ratio = 1.0f;
     cfg.image_width = 600;
-    cfg.samples_per_pixel = 200;
+    cfg.samples_per_pixel = 500;
     cfg.max_depth = 50;
     cfg.background = colour(0.0f, 0.0f, 0.0f);
     cfg.look_from = point3(278.0f, 278.0f, -800.0f);
@@ -1125,7 +1125,7 @@ void setup_scene_quads(SceneConfig& cfg) {
 
 
 void setup_scene_earth(SceneConfig& cfg) {
-    cfg.id = 5;
+    cfg.id = 4;
     cfg.name = "earth";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1200;
@@ -1136,19 +1136,19 @@ void setup_scene_earth(SceneConfig& cfg) {
     cfg.look_at = point3(0.0f, 0.0f, 0.0f);
     cfg.vup = vec3(0.0f, 1.0f, 0.0f);
     cfg.vfov = 20.0f;
-    cfg.primitive_kernel_id = 5;
+    cfg.primitive_kernel_id = 4;
 
     upload_required_image(cfg, "earthmap.jpg");
 }
 
 
 void setup_scene_table_earth(SceneConfig& cfg) {
-    cfg.id = 6;
+    cfg.id = 5;
     cfg.name = "table_earth_room";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1200;
-    cfg.samples_per_pixel = 200;
-    cfg.max_depth = 20;
+    cfg.samples_per_pixel = 500;
+    cfg.max_depth = 50;
     cfg.background = colour(0.20f, 0.46f, 0.66f);
 
     // Position camera just off the table corner:
@@ -1157,7 +1157,7 @@ void setup_scene_table_earth(SceneConfig& cfg) {
     cfg.look_at = point3(-1.90f, 1.22f, -1.15f);
     cfg.vup = vec3(0.0f, 1.0f, 0.0f);
     cfg.vfov = 38.0f;
-    cfg.primitive_kernel_id = 6;
+    cfg.primitive_kernel_id = 5;
 
     // Load Earth texture to host, then transfer to GPU metadata
     upload_required_image(cfg, "earthmap.jpg");
@@ -1787,10 +1787,26 @@ void render_scene(SceneConfig& scene_cfg) {
 // ----------------------------------------------------------------------------
 // MAIN
 // ----------------------------------------------------------------------------
-int main() {
-    constexpr int scene_id = 6;
+int main(int argc, char* argv[]) {
+    int scene_id = 1; // default scene
 
+    if (argc == 2) {
+        try {
+            scene_id = std::stoi(argv[1]);
+        } catch (const std::exception&) {
+            std::cerr << "Error: scene_id must be a valid integer.\n";
+            std::cerr << "Usage: " << argv[0] << " [scene_id]\n";
+            return EXIT_FAILURE;
+        }
+    } else if (argc > 2) {
+        std::cerr << "Usage: " << argv[0] << " [scene_id]\n";
+        return EXIT_FAILURE;
+    }
 
+    if (scene_id < 1 || scene_id > 5) {
+        std::cerr << "Error: scene_id must be between 1 and 5 inclusive.\n";
+        return EXIT_FAILURE;
+    }
     SceneConfig cfg;
 
     switch (scene_id) {
@@ -1806,11 +1822,11 @@ int main() {
             setup_scene_quads(cfg);
             break;
 
-        case 5:
+        case 4:
             setup_scene_earth(cfg);
             break;
 
-        case 6:
+        case 5:
             setup_scene_table_earth(cfg);
             break;
 
