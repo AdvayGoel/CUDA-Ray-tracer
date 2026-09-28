@@ -24,8 +24,8 @@ public:
     }
 
 private:
-    point3 orig; // Variable name matches the initializer list above
-    vec3   dir;  // Variable name matches the initializer list above
+    point3 orig; 
+    vec3   dir;  
 };
 
 #endif

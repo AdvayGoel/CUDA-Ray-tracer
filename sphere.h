@@ -16,6 +16,7 @@ sphere : public hittable {
         bbox = aabb(center - rvec, center + rvec);
     }
 
+    // Find algorithm in Notes
     __device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
         vec3 oc = center - r.origin();
         auto a = r.direction().length_squared();
@@ -48,7 +49,7 @@ sphere : public hittable {
         return bbox;
     }
     private:
-
+        // Find algorithm in Notes
         __device__ static void get_sphere_uv(const point3& p, float& u, float& v) {
         // p: a given point on the sphere of radius one, centered at the origin.
         // u: returned value [0,1] of angle around the Y axis from X=-1.

@@ -1,16 +1,16 @@
 #ifndef AABB_CUH
 #define AABB_CUH
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 
 class aabb {
     public:
-        interval x, y, z;
+        interval x, y, z; 
 
         HD    aabb() {}
 
         HD aabb(const interval& x, const interval& y, const interval& z)
         : x(x), y(y), z(z) {
-            pad_to_minimums();
+            pad_to_minimums(); // pad to ensure no infinitely small dimension
         }
 
         HD aabb(const point3& a, const point3& b) {
@@ -33,9 +33,10 @@ class aabb {
             else return x;
         }
 
-
+        // Find algorithm in Notes
         HD bool hit(const ray& r, interval ray_t, float inv_dir_x, float inv_dir_y, float inv_dir_z) const {
-
+            // takes in reciprocal of the direction to prevent repeated floating point division
+            // uses slab method for determining intersection
             float t0_x = (x.min - r.origin().x()) * inv_dir_x;
             float t1_x = (x.max - r.origin().x()) * inv_dir_x;
             float tmin = fminf(t0_x, t1_x);

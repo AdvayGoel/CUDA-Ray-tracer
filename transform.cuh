@@ -3,7 +3,7 @@
 
 #include "hittable.h"
 #include "vec3.cuh"
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 #include "mat3.cuh"
 
 class transform : public hittable {

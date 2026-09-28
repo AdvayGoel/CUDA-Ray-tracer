@@ -1,7 +1,7 @@
 #ifndef TEXTURE_H
 #define TEXTURE_H
 
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 
 
 class texture {

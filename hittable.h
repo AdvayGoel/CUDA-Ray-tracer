@@ -1,7 +1,7 @@
 #ifndef HITTABLE_H
 #define HITTABLE_H
 
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 #include "aabb.cuh"
 
 class material; // resolves circular referencing issues by forward declaration

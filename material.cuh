@@ -3,7 +3,7 @@
 
 #include "hittable.h"
 #include "texture.h"
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 
 
 class material {

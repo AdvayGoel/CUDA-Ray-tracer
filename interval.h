@@ -1,7 +1,7 @@
 #ifndef INTERVAL_H
 #define INTERVAL_H
 
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 
 #if defined(__CUDACC__)
     #define HD __host__ __device__

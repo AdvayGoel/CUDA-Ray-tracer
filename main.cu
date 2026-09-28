@@ -5,7 +5,7 @@
 
 #include <cuda_runtime.h>
 
-#include "rtweekend.cuh"
+#include "device_math.cuh"
 #include "colour.h"
 #include "texture.h"
 #include "material.cuh"
