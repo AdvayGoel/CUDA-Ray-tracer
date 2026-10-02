@@ -2,3 +2,5 @@ build/
 *.o
 *.bin
 .env
+reports/
+

@@ -87,7 +87,7 @@ __device__ inline float power_heuristic(float p_f, float p_g) {
     return (denom > 0.0f) ? (f2 / denom) : 0.0f;
 }
 
-__device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, const flat_bvh* world, quad* const* d_lights, int num_lights, unsigned int* local_rand_state) {
+__device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, const flat_bvh* world, hittable* const* d_lights, int num_lights, unsigned int* local_rand_state) {
     constexpr float epsilon = 0.001f;
     if (num_lights <= 0 || !rec.mat->supports_nee()) {
         return colour(0.0f, 0.0f, 0.0f);
@@ -95,7 +95,7 @@ __device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, c
 
     // Pick a random light from the list of lights
     int light_index = static_cast<int>(rand_float(local_rand_state) * num_lights);
-    const quad* light = d_lights[light_index];
+    const hittable* light = d_lights[light_index];
     // Probability of selecting that specific light
     float pdf_select = 1.0f / static_cast<float>(num_lights);
 
@@ -162,21 +162,21 @@ __device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, c
 __device__ float compute_light_pdf(
     const hit_record& rec,
     const point3& prev_origin,
-    quad* const* d_lights,
+    hittable* const* d_lights,
     int num_lights
 ) {
     if (num_lights <= 0) return 0.0f;
 
     // 1. Verify the hit object is actually a registered NEE light
     // (Requires rec.object to be set in hit_record during world->hit)
-    const quad* hit_quad = nullptr;
+    const hittable* hit_light = nullptr;
     for (int i = 0; i < num_lights; ++i) {
         if (d_lights[i] == rec.object) {
-            hit_quad = d_lights[i];
+            hit_light = d_lights[i];
             break;
         }
     }
-    if (!hit_quad) return 0.0f;
+    if (!hit_light) return 0.0f;
 
     // 2. Vector pointing from the previous surface vertex to the light hit point
     vec3 d_vec = rec.p - prev_origin;
@@ -185,13 +185,13 @@ __device__ float compute_light_pdf(
 
     vec3 dir = unit_vector(d_vec);
 
-    // 3. Cosine of angle between incoming ray and quad emitter's normal
-    // If the quad is one-sided, hits from behind cannot be sampled by NEE
-    float cos_theta_light = dot(hit_quad->geometric_normal(), -dir);
+    // 3. Cosine of angle between incoming ray and lights emitter's normal
+    // If the light is one-sided, hits from behind cannot be sampled by NEE
+    float cos_theta_light = dot(hit_light->geometric_normal(rec.p), -dir);
     if (cos_theta_light <= 0.0f) return 0.0f;
 
-    // 4. Area of the quad
-    float area = hit_quad->area_val();
+    // 4. Area of the light
+    float area = hit_light->area_val();
     if (area <= 0.0f) return 0.0f;
 
     // 5. Convert area PDF to solid-angle PDF:
@@ -206,7 +206,7 @@ __device__ colour ray_colour(
     int max_depth,
     unsigned int* local_rand_state,
     const colour& background,
-    quad* const* d_lights,
+    hittable** d_lights,
     int num_lights
 ) {
     ray cur_ray = initial_ray;
@@ -280,7 +280,7 @@ __device__ colour ray_colour(
             
             float mis_weight = 1.0f;
             if (previous_used_nee) {
-                // Compute the chance that the previous shadow ray hit this quad
+                // Compute the chance that the previous shadow ray hit this light
 
                 float p_light = compute_light_pdf(rec, prev_origin, d_lights, num_lights);
                 mis_weight = power_heuristic(prev_bsdf_pdf, p_light);

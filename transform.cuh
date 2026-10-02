@@ -41,6 +41,22 @@ public:
         return bbox;
     }
 
+    __device__ light_sample sample_light_point(unsigned int *local_rand_state) const override {
+        light_sample sample = object->sample_light_point(local_rand_state);
+        if (mat != nullptr) {
+            sample.Le = mat->emitted();
+        }
+        sample.normal = rotation * sample.normal;
+        sample.position = rotation * sample.position + offset;
+        return sample;
+    }
+
+    __device__ vec3 geometric_normal(const point3 at) const override {
+        vec3 local_norm = object->geometric_normal(rotation.transpose() * (at - offset));
+        return rotation * local_norm;
+
+    }
+
 private:
     hittable* object;
     vec3 offset;

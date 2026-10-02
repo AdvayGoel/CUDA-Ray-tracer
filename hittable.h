@@ -33,6 +33,23 @@ class hittable {
         __device__ virtual bool hit(const ray& r, interval ray_t, hit_record& rec) const = 0;
 
         __device__ __host__ virtual aabb bounding_box() const = 0;
-};
+
+        __device__ virtual light_sample sample_light_point(unsigned int* local_rand_state) const {
+            light_sample sample;
+            sample.Le = colour(0.0f, 0.0f, 0.0f);
+            sample.normal = vec3(0.0f, 0.0f, 0.0f);
+            sample.pdf_area = 0;
+            sample.position = point3(0, 0, 0);
+            return sample;
+        };
+
+        __device__ virtual vec3 geometric_normal(const point3 at) const {
+            return vec3(0.0f, 0.0f, 0.0f);
+        }
+
+        __device__ virtual float area_val() const {
+            return 0;
+        };
+    };
 
 #endif

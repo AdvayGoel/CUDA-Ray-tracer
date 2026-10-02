@@ -48,6 +48,26 @@ sphere : public hittable {
     __device__ __host__ aabb bounding_box() const override {
         return bbox;
     }
+
+    __device__ light_sample sample_light_point(unsigned int* local_rand_state) const override {
+            
+        light_sample sample;
+        vec3 random_unit = random_unit_vector(local_rand_state);
+        sample.position = radius * random_unit;
+        sample.pdf_area = 1.0f / area_val();
+        sample.normal = geometric_normal(sample.position);
+        sample.Le = mat->emitted();
+        return sample;
+    }
+
+    __device__ vec3 geometric_normal(const point3 at) const override {
+        return unit_vector(at - center);
+    }
+
+    __device__  float area_val() const override{
+        return 4 * PI_F * radius * radius;
+    }
+
     private:
         // Find algorithm in Notes
         __device__ static void get_sphere_uv(const point3& p, float& u, float& v) {

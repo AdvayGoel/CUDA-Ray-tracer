@@ -54,7 +54,8 @@ class quad : public hittable {
             return true;
         }
 
-        __device__ light_sample sample_light_point(unsigned int* local_rand_state) const {
+        // Functions used to sample a random point on a light, allows a shape to be used as a light in NEE
+        __device__ light_sample sample_light_point(unsigned int* local_rand_state) const override {
             
             light_sample sample;
             float alpha = rand_float(local_rand_state);
@@ -67,11 +68,11 @@ class quad : public hittable {
             return sample;
         }
 
-        __device__ vec3 geometric_normal() const {
+        __device__ vec3 geometric_normal(const point3 at) const override {
             return normal;
         }
 
-        __device__  float area_val() const {
+        __device__  float area_val() const override {
             return area;
         }
 

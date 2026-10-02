@@ -88,7 +88,7 @@ __device__ void create_light_box(
     material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
-    quad** d_lights,
+    hittable** d_lights,
     aabb* d_boxes,
     int* d_obj_count,
     int* d_proto_count,
@@ -118,17 +118,17 @@ __device__ void create_light_box(
     );
     d_materials[mat_idx++] = new lambertian(d_textures[0]);
 
-    quad* light = new quad(point3(0,0,0), vec3(1,0,0), vec3(0,0,1), d_materials[0]);
     // Primitives
+    cuboid *light = new cuboid(point3(0.5, 0.5, 0.5), 0.5, 0.5, 0.5, d_materials[0]);
+
     d_raw_list[obj_idx++] = light;
-
-    d_lights[light_idx++] = light;
-
     d_raw_list[obj_idx++] = new sphere(
         point3(0.0f, -1000.0f, 0.0f),
         1000.0f,
         d_materials[1]
     );
+
+    d_lights[light_idx++] = light;
 
 
     for (int i = 0; i < obj_idx; ++i) {
@@ -146,7 +146,7 @@ __device__ void create_snowman_kernel(
     material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
-    quad** d_lights,
+    hittable** d_lights,
     aabb* d_boxes,
     int* d_obj_count,
     int* d_proto_count,
@@ -371,7 +371,7 @@ __device__ void create_quads(
     material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
-    quad** d_lights,
+    hittable** d_lights,
     aabb* d_boxes,
     int* d_obj_count,
     int* d_proto_count,
@@ -501,7 +501,7 @@ __device__ void create_earth_scene(
     material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
-    quad** d_lights,
+    hittable** d_lights,
     aabb* d_boxes,
     int* d_obj_count,
     int* d_proto_count,
@@ -550,7 +550,7 @@ __device__ void create_table_earth_scene(
     material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
-    quad** d_lights,
+    hittable** d_lights,
     aabb* d_boxes,
     int* d_obj_count,
     int* d_proto_count,
@@ -820,6 +820,187 @@ __device__ void create_table_earth_scene(
     *light_count = light_idx;
 }
 
+__device__ void create_spheres_benchmark_kernel(
+    hittable** draw_list,
+    material** d_materials,
+    texture** d_textures,
+    hittable** d_prototypes,
+    hittable** d_lights,
+    aabb* d_boxes,
+    int* d_obj_count,
+    int* d_proto_count,
+    int* d_light_count,
+    const ImageMetadata* d_scene_images
+) {
+    if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+    unsigned int seed = 42u; // Fixed deterministic seed for reproducible benchmarks
+    int mat_idx = 0;
+    int tex_idx = 0;
+    int proto_idx = 0;
+    int obj_idx = 0;
+    int light_idx = 0;
+
+    // ------------------------------------------------------------------------
+    // 1. Ground Plane (Giant Sphere)
+    // ------------------------------------------------------------------------
+    d_textures[tex_idx] = new solid_colour(colour(0.5f, 0.5f, 0.5f));
+    d_materials[mat_idx] = new lambertian(d_textures[tex_idx]);
+    tex_idx++;
+    mat_idx++;
+
+    draw_list[obj_idx] = new sphere(point3(0.0f, -1000.0f, 0.0f), 1000.0f, d_materials[0]);
+    obj_idx++;
+
+    // ------------------------------------------------------------------------
+    // 2. Three Central Hero Spheres
+    // ------------------------------------------------------------------------
+    // Glass sphere
+    d_materials[mat_idx] = new dielectric(1.5f);
+    draw_list[obj_idx] = new sphere(point3(0.0f, 1.0f, 0.0f), 1.0f, d_materials[mat_idx]);
+    mat_idx++;
+    obj_idx++;
+
+    // Matte diffuse sphere
+    d_textures[tex_idx] = new solid_colour(colour(0.4f, 0.2f, 0.1f));
+    d_materials[mat_idx] = new lambertian(d_textures[tex_idx]);
+    tex_idx++;
+    draw_list[obj_idx] = new sphere(point3(-4.0f, 1.0f, 0.0f), 1.0f, d_materials[mat_idx]);
+    mat_idx++;
+    obj_idx++;
+
+    // Smooth metal sphere
+    d_materials[mat_idx] = new metal(colour(0.7f, 0.6f, 0.5f), 0.0f);
+    draw_list[obj_idx] = new sphere(point3(4.0f, 1.0f, 0.0f), 1.0f, d_materials[mat_idx]);
+    mat_idx++;
+    obj_idx++;
+
+    // ------------------------------------------------------------------------
+    // 3. Grid of Random Small Spheres (Target: ~1,000 Total Primitives)
+    // Range: a in [-17, 17], b in [-14, 15] -> 35 * 30 = 1050 candidate cells
+    // ------------------------------------------------------------------------
+    for (int a = -17; a <= 17; ++a) {
+        for (int b = -14; b <= 15; ++b) {
+            if (obj_idx >= 1000) break;
+
+            const float choose_mat = rand_float(&seed);
+            const point3 center(
+                static_cast<float>(a) + 0.9f * rand_float(&seed),
+                0.2f,
+                static_cast<float>(b) + 0.9f * rand_float(&seed)
+            );
+
+            // Avoid placing small spheres inside the 3 large hero spheres
+            const float dist_diffuse = (center - point3(-4.0f, 1.0f, 0.0f)).length();
+            const float dist_glass   = (center - point3( 0.0f, 1.0f, 0.0f)).length();
+            const float dist_metal   = (center - point3( 4.0f, 1.0f, 0.0f)).length();
+
+            if (dist_diffuse > 1.25f && dist_glass > 1.25f && dist_metal > 1.25f) {
+                material* mat = nullptr;
+
+                if (choose_mat < 0.70f) {
+                    // Diffuse
+                    const colour albedo(
+                        rand_float(&seed) * rand_float(&seed),
+                        rand_float(&seed) * rand_float(&seed),
+                        rand_float(&seed) * rand_float(&seed)
+                    );
+                    d_textures[tex_idx] = new solid_colour(albedo);
+                    mat = new lambertian(d_textures[tex_idx]);
+                    tex_idx++;
+                } else if (choose_mat < 0.88f) {
+                    // Metal
+                    const colour albedo(
+                        0.5f * (1.0f + rand_float(&seed)),
+                        0.5f * (1.0f + rand_float(&seed)),
+                        0.5f * (1.0f + rand_float(&seed))
+                    );
+                    const float fuzz = 0.5f * rand_float(&seed);
+                    mat = new metal(albedo, fuzz);
+                } else {
+                    // Glass
+                    mat = new dielectric(1.5f);
+                }
+
+                d_materials[mat_idx] = mat;
+                mat_idx++;
+
+                draw_list[obj_idx] = new sphere(center, 0.2f, mat);
+                obj_idx++;
+            }
+        }
+    }
+
+    // Compute bounding boxes for the Host BVH builder
+    for (int i = 0; i < obj_idx; ++i) {
+        d_boxes[i] = draw_list[i]->bounding_box();
+    }
+
+    *d_obj_count = obj_idx;
+    *d_proto_count = proto_idx;
+    *d_light_count = light_idx;
+}
+
+__device__ void create_cornell_glass_kernel(
+    hittable** draw_list,
+    material** d_materials,
+    texture** d_textures,
+    hittable** d_prototypes,
+    hittable** d_lights,
+    aabb* d_boxes,
+    int* d_obj_count,
+    int* d_proto_count,
+    int* d_light_count,
+    const ImageMetadata* d_scene_images
+) {
+    if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+    int mat_idx = 0;
+    int tex_idx = 0;
+    int proto_idx = 0;
+    int obj_idx = 0;
+    int light_idx = 0;
+
+    // Textures
+    d_textures[tex_idx++] = new solid_colour(colour(0.65f, 0.05f, 0.05f)); // 0: Red
+    d_textures[tex_idx++] = new solid_colour(colour(0.73f, 0.73f, 0.73f)); // 1: White
+    d_textures[tex_idx++] = new solid_colour(colour(0.12f, 0.45f, 0.15f)); // 2: Green
+
+    // Materials
+    d_materials[mat_idx++] = new lambertian(d_textures[0]);                       // 0: Red
+    d_materials[mat_idx++] = new lambertian(d_textures[1]);                       // 1: White
+    d_materials[mat_idx++] = new lambertian(d_textures[2]);                       // 2: Green
+    d_materials[mat_idx++] = new diffuse_light(colour(15.0f, 15.0f, 15.0f));     // 3: Light
+    d_materials[mat_idx++] = new dielectric(1.5f);                                // 4: Glass (dielectric)
+    d_materials[mat_idx++] = new metal(colour(0.85f, 0.85f, 0.85f), 0.0f);        // 5: Mirror metal
+
+    // Walls
+    draw_list[obj_idx++] = new quad(point3(555, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), d_materials[2]); // Green
+    draw_list[obj_idx++] = new quad(point3(0, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), d_materials[0]);   // Red
+    draw_list[obj_idx++] = new quad(point3(0, 0, 0), vec3(555, 0, 0), vec3(0, 0, 555), d_materials[1]);   // Floor
+    draw_list[obj_idx++] = new quad(point3(0, 555, 0), vec3(555, 0, 0), vec3(0, 0, 555), d_materials[1]); // Ceiling
+    draw_list[obj_idx++] = new quad(point3(0, 0, 555), vec3(555, 0, 0), vec3(0, 555, 0), d_materials[1]); // Back
+
+    // Ceiling Light
+    quad* light = new quad(point3(213, 554, 227), vec3(130, 0, 0), vec3(0, 0, 105), d_materials[3]);
+    draw_list[obj_idx++] = light;
+    d_lights[light_idx++] = light;
+
+    // Two Hero Spheres (Glass vs Mirror)
+    // Left: Glass sphere with refraction & internal reflection
+    draw_list[obj_idx++] = new sphere(point3(190.0f, 90.0f, 190.0f), 90.0f, d_materials[4]);
+    // Right: Reflective polished metal sphere
+    draw_list[obj_idx++] = new sphere(point3(380.0f, 90.0f, 370.0f), 90.0f, d_materials[5]);
+
+    for (int i = 0; i < obj_idx; ++i) {
+        d_boxes[i] = draw_list[i]->bounding_box();
+    }
+
+    *d_obj_count = obj_idx;
+    *d_proto_count = proto_idx;
+    *d_light_count = light_idx;
+}
+
 constexpr int MAX_OBJECTS = 2000;
 constexpr int MAX_MATERIALS = 2000;
 constexpr int MAX_TEXTURES = 2000;
@@ -834,7 +1015,7 @@ __global__ void create_primitives_kernel(
     material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
-    quad** d_lights,
+    hittable** d_lights,
     aabb* d_boxes,
     int* d_obj_count,
     int* d_proto_count,
@@ -875,6 +1056,17 @@ __global__ void create_primitives_kernel(
             create_table_earth_scene(
                 d_raw_list, d_materials, d_textures, d_prototypes, d_lights,
                 d_boxes, d_obj_count, d_proto_count, d_light_count, d_scene_images
+            );
+            break;
+        case 6:
+            create_spheres_benchmark_kernel(
+                d_raw_list, d_materials, d_textures, d_prototypes, d_lights,
+                d_boxes, d_obj_count, d_proto_count, d_light_count, d_scene_images                
+            );
+        case 7:
+            create_cornell_glass_kernel(
+                d_raw_list, d_materials, d_textures, d_prototypes, d_lights,
+                d_boxes, d_obj_count, d_proto_count, d_light_count, d_scene_images                
             );
             break;
     }
@@ -955,7 +1147,7 @@ __global__ void render_subpass_kernel(
     flat_bvh* d_world,
     int pass_offset,
     int samples_to_render,
-    quad** lights,
+    hittable** lights,
     int num_lights
 ) {
     const int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1097,7 +1289,7 @@ void setup_scene_lightbox(SceneConfig& cfg) {
     cfg.name = "light_box";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1600;
-    cfg.samples_per_pixel = 100;
+    cfg.samples_per_pixel = 500;
     cfg.max_depth = 50;
     cfg.background = colour(0.0f, 0.0f, 0.0f);
     cfg.look_from = point3(10.0f, 3.5f, 3.5f);
@@ -1113,7 +1305,7 @@ void setup_scene_quads(SceneConfig& cfg) {
     cfg.name = "quads";
     cfg.aspect_ratio = 1.0f;
     cfg.image_width = 600;
-    cfg.samples_per_pixel = 500;
+    cfg.samples_per_pixel = 512;
     cfg.max_depth = 50;
     cfg.background = colour(0.0f, 0.0f, 0.0f);
     cfg.look_from = point3(278.0f, 278.0f, -800.0f);
@@ -1129,7 +1321,7 @@ void setup_scene_earth(SceneConfig& cfg) {
     cfg.name = "earth";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1200;
-    cfg.samples_per_pixel = 100;
+    cfg.samples_per_pixel = 500;
     cfg.max_depth = 50;
     cfg.background = colour(0.70f, 0.80f, 1.00f);
     cfg.look_from = point3(0.0f, 0.0f, 12.0f);
@@ -1164,23 +1356,47 @@ void setup_scene_table_earth(SceneConfig& cfg) {
     upload_required_image(cfg, "wooden.jpg");
 }
 
+void setup_scene_spheres_benchmark(SceneConfig& cfg) {
+    cfg.id = 6;
+    cfg.name = "spheres_1000_benchmark";
+    cfg.aspect_ratio = 16.0f / 9.0f;
+    cfg.image_width = 1600;
+    cfg.samples_per_pixel = 256;
+    cfg.max_depth = 50;
+    cfg.background = colour(0.70f, 0.80f, 1.00f); // Clean sky blue
+    cfg.look_from = point3(13.0f, 2.0f, 3.0f);
+    cfg.look_at = point3(0.0f, 0.0f, 0.0f);
+    cfg.vup = vec3(0.0f, 1.0f, 0.0f);
+    cfg.vfov = 20.0f;
+    cfg.primitive_kernel_id = 6;
+}
+
+// Stress Test: Dielectric/Glass Cornell Box (High warp divergence via Snell's Law & TIR)
+void setup_scene_cornell_glass(SceneConfig& cfg) {
+    cfg.id = 7;
+    cfg.name = "cornell_glass_divergence";
+    cfg.aspect_ratio = 1.0f;
+    cfg.image_width = 600;
+    cfg.samples_per_pixel = 512;
+    cfg.max_depth = 50;
+    cfg.background = colour(0.0f, 0.0f, 0.0f);
+    cfg.look_from = point3(278.0f, 278.0f, -800.0f);
+    cfg.look_at = point3(278.0f, 278.0f, 0.0f);
+    cfg.vup = vec3(0.0f, 1.0f, 0.0f);
+    cfg.vfov = 40.0f;
+    cfg.primitive_kernel_id = 7;
+}
+
 // ----------------------------------------------------------------------------
 // SHARED RENDER PIPELINE
 // ----------------------------------------------------------------------------
 void render_scene(SceneConfig& scene_cfg) {
     // Scene construction uses device-side new, so configure the CUDA device heap
     // before launching the primitive/world creation kernels.
-    
-    const auto total_start =
-    std::chrono::steady_clock::now();
-    checkCudaErrors(cudaDeviceSetLimit(
-        cudaLimitMallocHeapSize,
-        DEVICE_HEAP_BYTES
-    ));
-
+    const auto total_start = std::chrono::steady_clock::now();
+    checkCudaErrors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, DEVICE_HEAP_BYTES));
 
     camera cam;
-
     cam.aspect_ratio = scene_cfg.aspect_ratio;
     cam.image_width = scene_cfg.image_width;
     cam.samples_per_pixel = scene_cfg.samples_per_pixel;
@@ -1193,12 +1409,9 @@ void render_scene(SceneConfig& scene_cfg) {
 
     cam.initialize();
 
-
     const int num_pixels = cam.image_width * cam.image_height;
     // Setups a frame buffer to store all pixels
-    const size_t fb_size =
-        static_cast<size_t>(num_pixels) * sizeof(colour);
-
+    const size_t fb_size = static_cast<size_t>(num_pixels) * sizeof(colour);
 
     colour* d_fb = nullptr;
     colour* d_accum_fb = nullptr;
@@ -1207,19 +1420,17 @@ void render_scene(SceneConfig& scene_cfg) {
     checkCudaErrors(cudaMalloc(&d_accum_fb, fb_size));
     checkCudaErrors(cudaMemset(d_accum_fb, 0, fb_size));
 
-
     const int max_objects = MAX_OBJECTS;
     const int max_materials = MAX_MATERIALS;
     const int max_textures = MAX_TEXTURES;
     const int max_prototypes = MAX_PROTOTYPES;
     const int max_lights = MAX_LIGHTS;
 
-
     hittable** d_raw_list = nullptr;
     material** d_materials = nullptr;
     texture** d_textures = nullptr;
     hittable** d_prototypes = nullptr;
-    quad** d_lights = nullptr;
+    hittable** d_lights = nullptr;
     aabb* d_boxes = nullptr;
     int* d_obj_count = nullptr;
     int* d_proto_count = nullptr;
@@ -1227,119 +1438,29 @@ void render_scene(SceneConfig& scene_cfg) {
     hittable** d_ordered_prims = nullptr;
     flat_bvh** d_world_ptr = nullptr;
 
-
-    checkCudaErrors(cudaMalloc(
-        &d_raw_list,
-        max_objects * sizeof(hittable*)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_materials,
-        max_materials * sizeof(material*)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_textures,
-        max_textures * sizeof(texture*)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_prototypes,
-        max_prototypes * sizeof(hittable*)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_boxes,
-        max_objects * sizeof(aabb)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_lights,
-        max_lights * sizeof(quad*)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_obj_count,
-        sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_proto_count,
-        sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_light_count,
-        sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_ordered_prims,
-        max_objects * sizeof(hittable*)
-    ));
-
-    checkCudaErrors(cudaMalloc(
-        &d_world_ptr,
-        sizeof(flat_bvh*)
-    ));
-
+    checkCudaErrors(cudaMalloc(&d_raw_list, max_objects * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc(&d_materials, max_materials * sizeof(material*)));
+    checkCudaErrors(cudaMalloc(&d_textures, max_textures * sizeof(texture*)));
+    checkCudaErrors(cudaMalloc(&d_prototypes, max_prototypes * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc(&d_boxes, max_objects * sizeof(aabb)));
+    checkCudaErrors(cudaMalloc(&d_lights, max_lights * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc(&d_obj_count, sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_proto_count, sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_light_count, sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_ordered_prims, max_objects * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc(&d_world_ptr, sizeof(flat_bvh*)));
 
     // Initialise all pointer arrays and counters. This makes scene creation
     // and cleanup safe even if a scene has fewer than the maximum capacities.
-    checkCudaErrors(cudaMemset(
-        d_raw_list,
-        0,
-        max_objects * sizeof(hittable*)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_materials,
-        0,
-        max_materials * sizeof(material*)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_textures,
-        0,
-        max_textures * sizeof(texture*)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_prototypes,
-        0,
-        max_prototypes * sizeof(hittable*)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_lights,
-        0,
-        max_lights * sizeof(quad*)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_obj_count,
-        0,
-        sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_proto_count,
-        0,
-        sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_light_count,
-        0,
-        sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMemset(
-        d_world_ptr,
-        0,
-        sizeof(flat_bvh*)
-    ));
-
+    checkCudaErrors(cudaMemset(d_raw_list, 0, max_objects * sizeof(hittable*)));
+    checkCudaErrors(cudaMemset(d_materials, 0, max_materials * sizeof(material*)));
+    checkCudaErrors(cudaMemset(d_textures, 0, max_textures * sizeof(texture*)));
+    checkCudaErrors(cudaMemset(d_prototypes, 0, max_prototypes * sizeof(hittable*)));
+    checkCudaErrors(cudaMemset(d_lights, 0, max_lights * sizeof(hittable*)));
+    checkCudaErrors(cudaMemset(d_obj_count, 0, sizeof(int)));
+    checkCudaErrors(cudaMemset(d_proto_count, 0, sizeof(int)));
+    checkCudaErrors(cudaMemset(d_light_count, 0, sizeof(int)));
+    checkCudaErrors(cudaMemset(d_world_ptr, 0, sizeof(flat_bvh*)));
 
     ImageMetadata* d_scene_images = nullptr;
 
@@ -1347,227 +1468,129 @@ void render_scene(SceneConfig& scene_cfg) {
         const size_t meta_size =
             scene_cfg.loaded_images.size() * sizeof(ImageMetadata);
 
-        checkCudaErrors(cudaMalloc(
-            &d_scene_images,
-            meta_size
-        ));
-
-        checkCudaErrors(cudaMemcpy(
-            d_scene_images,
-            scene_cfg.loaded_images.data(),
-            meta_size,
-            cudaMemcpyHostToDevice
-        ));
+        checkCudaErrors(cudaMalloc(&d_scene_images, meta_size));
+        checkCudaErrors(cudaMemcpy(d_scene_images, scene_cfg.loaded_images.data(),
+                                   meta_size, cudaMemcpyHostToDevice));
     }
 
-
-    std::cerr
-        << "Creating primitives on GPU (scene: "
-        << scene_cfg.name
-        << ")...\n";
+    std::cerr << "Creating primitives on GPU (scene: " << scene_cfg.name << ")...\n";
 
     create_primitives_kernel<<<1, 1>>>(
-        d_raw_list,
-        d_materials,
-        d_textures,
-        d_prototypes,
-        d_lights,
-        d_boxes,
-        d_obj_count,
-        d_proto_count,
-        d_light_count,
-        scene_cfg.primitive_kernel_id,
-        d_scene_images
-    );
+        d_raw_list, d_materials, d_textures, d_prototypes, d_lights,
+        d_boxes, d_obj_count, d_proto_count, d_light_count,
+        scene_cfg.primitive_kernel_id, d_scene_images);
 
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
-
 
     int num_objects = 0;
     int num_prototypes = 0;
     int num_lights = 0;
 
-    checkCudaErrors(cudaMemcpy(
-        &num_objects,
-        d_obj_count,
-        sizeof(int),
-        cudaMemcpyDeviceToHost
-    ));
-
-    checkCudaErrors(cudaMemcpy(
-        &num_prototypes,
-        d_proto_count,
-        sizeof(int),
-        cudaMemcpyDeviceToHost
-    ));
-
-    checkCudaErrors(cudaMemcpy(
-        &num_lights,
-        d_light_count,
-        sizeof(int),
-        cudaMemcpyDeviceToHost
-    ));
-
+    checkCudaErrors(cudaMemcpy(&num_objects, d_obj_count, sizeof(int), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(&num_prototypes, d_proto_count, sizeof(int), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(&num_lights, d_light_count, sizeof(int), cudaMemcpyDeviceToHost));
 
     if (num_objects <= 0 || num_objects > max_objects) {
-        std::cerr
-            << "ERROR: Invalid object count returned by scene construction: "
-            << num_objects
-            << "\n";
-
+        std::cerr << "ERROR: Invalid object count returned by scene construction: "
+                  << num_objects << "\n";
         std::exit(EXIT_FAILURE);
     }
-
     if (num_prototypes < 0 || num_prototypes > max_prototypes) {
-        std::cerr
-            << "ERROR: Invalid prototype count returned by scene construction: "
-            << num_prototypes
-            << "\n";
-
+        std::cerr << "ERROR: Invalid prototype count returned by scene construction: "
+                  << num_prototypes << "\n";
         std::exit(EXIT_FAILURE);
     }
     if (num_lights < 0 || num_lights > max_lights) {
-        std::cerr
-            << "ERROR: Invalid light count returned by scene construction: "
-            << num_lights
-            << '\n';
-
+        std::cerr << "ERROR: Invalid light count returned by scene construction: "
+                  << num_lights << '\n';
         std::exit(EXIT_FAILURE);
     }
 
-
     std::vector<aabb> host_boxes(num_objects);
+    checkCudaErrors(cudaMemcpy(host_boxes.data(), d_boxes,
+                               static_cast<size_t>(num_objects) * sizeof(aabb),
+                               cudaMemcpyDeviceToHost));
 
-    checkCudaErrors(cudaMemcpy(
-        host_boxes.data(),
-        d_boxes,
-        static_cast<size_t>(num_objects) * sizeof(aabb),
-        cudaMemcpyDeviceToHost
-    ));
+    // ------------------------------------------------------------------------
+    // BUILD LINEAR BVH ON HOST (TIMED)
+    // ------------------------------------------------------------------------
+    std::cerr << "Building Linear BVH on Host with " << num_objects << " objects...\n";
 
-
-    // Build Linear BVH on Host
-    std::cerr
-        << "Building Linear BVH on Host with "
-        << num_objects
-        << " objects...\n";
+    const auto bvh_start = std::chrono::steady_clock::now();
 
     std::vector<hittable*> host_proxies(num_objects);
-
     for (int i = 0; i < num_objects; ++i) {
-        host_proxies[i] = new HostProxyPrimitive(
-            i,
-            host_boxes[i]
-        );
+        host_proxies[i] = new HostProxyPrimitive(i, host_boxes[i]);
     }
-
 
     std::vector<hittable*> ordered_proxies;
     std::vector<FlatBVHNode> flat_nodes;
-
-    auto root = BVHBuilder::build(
-        host_proxies,
-        0,
-        num_objects,
-        ordered_proxies
-    );
-
+    auto root = BVHBuilder::build(host_proxies, 0, num_objects, ordered_proxies);
     BVHBuilder::flatten(root, flat_nodes);
 
+    const auto bvh_end = std::chrono::steady_clock::now();
+    const double bvh_ms = std::chrono::duration<double, std::milli>(bvh_end - bvh_start).count();
 
     std::vector<int> ordered_indices(num_objects);
-
     for (int i = 0; i < num_objects; ++i) {
-        ordered_indices[i] =
-            static_cast<HostProxyPrimitive*>(
-                ordered_proxies[i]
-            )->id;
-
+        ordered_indices[i] = static_cast<HostProxyPrimitive*>(ordered_proxies[i])->id;
         delete host_proxies[i];
     }
 
+    std::cerr << "BVH complete: " << flat_nodes.size() << " flat nodes generated.\n";
 
-    std::cerr
-        << "BVH complete: "
-        << flat_nodes.size()
-        << " flat nodes generated.\n";
-
-
-    FlatBVHNode* d_flat_nodes = nullptr;
-
-    checkCudaErrors(cudaMalloc(
-        &d_flat_nodes,
-        flat_nodes.size() * sizeof(FlatBVHNode)
-    ));
-
-    checkCudaErrors(cudaMemcpy(
-        d_flat_nodes,
-        flat_nodes.data(),
-        flat_nodes.size() * sizeof(FlatBVHNode),
-        cudaMemcpyHostToDevice
-    ));
-
+    FlatBVHNode* d_flatnodes = nullptr;
+    checkCudaErrors(cudaMalloc(&d_flatnodes, flat_nodes.size() * sizeof(FlatBVHNode)));
+    checkCudaErrors(cudaMemcpy(d_flatnodes, flat_nodes.data(),
+                               flat_nodes.size() * sizeof(FlatBVHNode),
+                               cudaMemcpyHostToDevice));
 
     int* d_ordering = nullptr;
+    checkCudaErrors(cudaMalloc(&d_ordering, ordered_indices.size() * sizeof(int)));
+    checkCudaErrors(cudaMemcpy(d_ordering, ordered_indices.data(),
+                               ordered_indices.size() * sizeof(int),
+                               cudaMemcpyHostToDevice));
 
-    checkCudaErrors(cudaMalloc(
-        &d_ordering,
-        ordered_indices.size() * sizeof(int)
-    ));
-
-    checkCudaErrors(cudaMemcpy(
-        d_ordering,
-        ordered_indices.data(),
-        ordered_indices.size() * sizeof(int),
-        cudaMemcpyHostToDevice
-    ));
-
-
-    create_bvh_world_kernel<<<1, 1>>>(
-        d_flat_nodes,
-        d_raw_list,
-        d_ordering,
-        d_ordered_prims,
-        d_world_ptr,
-        num_objects
-    );
-
+    create_bvh_world_kernel<<<1, 1>>>(d_flatnodes, d_raw_list, d_ordering,
+                                     d_ordered_prims, d_world_ptr, num_objects);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
-
     flat_bvh* d_world = nullptr;
-
-    checkCudaErrors(cudaMemcpy(
-        &d_world,
-        d_world_ptr,
-        sizeof(flat_bvh*),
-        cudaMemcpyDeviceToHost
-    ));
-
+    checkCudaErrors(cudaMemcpy(&d_world, d_world_ptr, sizeof(flat_bvh*),
+                               cudaMemcpyDeviceToHost));
     if (d_world == nullptr) {
-        std::cerr
-            << "ERROR: Failed to construct GPU BVH world.\n";
-
+        std::cerr << "ERROR: Failed to construct GPU BVH world.\n";
         std::exit(EXIT_FAILURE);
     }
 
-
+    // ------------------------------------------------------------------------
+    // KERNEL LAUNCH CONFIGURATION
+    // ------------------------------------------------------------------------
     const dim3 threads(16, 16);
+    const dim3 blocks((cam.image_width + threads.x - 1) / threads.x,
+                      (cam.image_height + threads.y - 1) / threads.y);
 
-    const dim3 blocks(
-        (cam.image_width + threads.x - 1) / threads.x,
-        (cam.image_height + threads.y - 1) / threads.y
-    );
+    const int resolve_threads = 256;
+    const int resolve_blocks = (num_pixels + resolve_threads - 1) / resolve_threads;
 
+    // ------------------------------------------------------------------------
+    // WARM-UP PASS (1 sample, untimed - eliminates driver cold-start latency)
+    // ------------------------------------------------------------------------
+    render_subpass_kernel<<<blocks, threads>>>(
+        d_accum_fb, cam, d_world, 0, 1, d_lights, num_lights);
+    checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaDeviceSynchronize());
+    checkCudaErrors(cudaMemset(d_accum_fb, 0, fb_size));
 
-    std::cerr
-    << "Rendering image with Linear BVH in multi-pass batches...\n";
+    // ------------------------------------------------------------------------
+    // GPU RENDERING PASSES (TIMED WITH CUDA EVENTS)
+    // ------------------------------------------------------------------------
+    std::cerr << "Rendering image with Linear BVH in multi-pass batches...\n";
 
     cudaEvent_t render_start;
     cudaEvent_t render_end;
-
     checkCudaErrors(cudaEventCreate(&render_start));
     checkCudaErrors(cudaEventCreate(&render_end));
 
@@ -1578,99 +1601,60 @@ void render_scene(SceneConfig& scene_cfg) {
     int pass_count = 0;
 
     while (remaining_samples > 0) {
-        const int samples_this_pass =
-            (remaining_samples > SAMPLES_PER_PASS)
-            ? SAMPLES_PER_PASS
-            : remaining_samples;
+        const int samples_this_pass = (remaining_samples > SAMPLES_PER_PASS)
+                                          ? SAMPLES_PER_PASS
+                                          : remaining_samples;
 
         render_subpass_kernel<<<blocks, threads>>>(
-            d_accum_fb,
-            cam,
-            d_world,
-            pass_offset,
-            samples_this_pass, d_lights, num_lights
-        );
-
+            d_accum_fb, cam, d_world, pass_offset, samples_this_pass, d_lights, num_lights);
         checkCudaErrors(cudaGetLastError());
 
         remaining_samples -= samples_this_pass;
         pass_offset += samples_this_pass;
-        ++pass_count;
+        pass_count++;
     }
+
+    // Resolve accumulator into final per-pixel colour
+    resolve_framebuffer_kernel<<<resolve_blocks, resolve_threads>>>(
+        d_fb, d_accum_fb, num_pixels, 1.0f / static_cast<float>(cam.samples_per_pixel));
+    checkCudaErrors(cudaGetLastError());
 
     checkCudaErrors(cudaEventRecord(render_end));
     checkCudaErrors(cudaEventSynchronize(render_end));
 
     float render_ms = 0.0f;
+    checkCudaErrors(cudaEventElapsedTime(&render_ms, render_start, render_end));
 
-    checkCudaErrors(cudaEventElapsedTime(
-        &render_ms,
-        render_start,
-        render_end
-    ));
-
-    const double total_camera_samples =
-        static_cast<double>(num_pixels)
-        * static_cast<double>(cam.samples_per_pixel);
-
+    // Compute Ray Tracing Throughput
+    const double total_camera_samples = static_cast<double>(num_pixels) *
+                                        static_cast<double>(cam.samples_per_pixel);
     const double camera_samples_per_second =
         total_camera_samples / (static_cast<double>(render_ms) / 1000.0);
+    const double mrps = camera_samples_per_second / 1e6;
 
-    std::cerr
-        << "\n--- GPU Render Timing ---\n"
-        << "Resolution: "
-        << cam.image_width << " x " << cam.image_height << '\n'
-        << "Pixels: "
-        << num_pixels << '\n'
-        << "Samples per pixel: "
-        << cam.samples_per_pixel << '\n'
-        << "Samples per pass: "
-        << SAMPLES_PER_PASS << '\n'
-        << "Render passes: "
-        << pass_count << '\n'
-        << "GPU render time: "
-        << render_ms << " ms\n"
-        << "Camera samples/sec: "
-        << camera_samples_per_second << '\n'
-        << "-------------------------\n";
+    std::cerr << "\n--- GPU Render Timing ---\n"
+              << "Scene:                      " << scene_cfg.name << "\n"
+              << "Resolution:                 " << cam.image_width << " x " << cam.image_height << "\n"
+              << "Primitives:                 " << num_objects << "\n"
+              << "Pixels:                     " << num_pixels << "\n"
+              << "Samples per pixel:          " << cam.samples_per_pixel << "\n"
+              << "Samples per pass:           " << SAMPLES_PER_PASS << "\n"
+              << "Render passes:              " << pass_count << "\n"
+              << "Host BVH Build time:        " << bvh_ms << " ms\n"
+              << "GPU render time:            " << render_ms << " ms\n"
+              << "Camera throughput:          " << mrps << " MRPS\n"
+              << "-------------------------\n\n";
 
     checkCudaErrors(cudaEventDestroy(render_start));
     checkCudaErrors(cudaEventDestroy(render_end));
 
-    const int resolve_threads = 256;
-
-    const int resolve_blocks =
-        (num_pixels + resolve_threads - 1)
-        / resolve_threads;
-
-    resolve_framebuffer_kernel<<<resolve_blocks, resolve_threads>>>(
-        d_fb,
-        d_accum_fb,
-        num_pixels,
-        1.0f / static_cast<float>(cam.samples_per_pixel)
-    );
-
-    checkCudaErrors(cudaGetLastError());
-    checkCudaErrors(cudaDeviceSynchronize());
-
-
+    // ------------------------------------------------------------------------
+    // FRAMEBUFFER RETRIEVAL & FILE WRITE
+    // ------------------------------------------------------------------------
     std::vector<colour> h_fb(num_pixels);
+    checkCudaErrors(cudaMemcpy(h_fb.data(), d_fb, fb_size, cudaMemcpyDeviceToHost));
 
-    checkCudaErrors(cudaMemcpy(
-        h_fb.data(),
-        d_fb,
-        fb_size,
-        cudaMemcpyDeviceToHost
-    ));
-
-
-    std::cout
-        << "P3\n"
-        << cam.image_width
-        << ' '
-        << cam.image_height
-        << "\n255\n";
-
+    std::cout << "P3\n" << cam.image_width << ' ' << cam.image_height << "\n255\n";
     for (int j = 0; j < cam.image_height; ++j) {
         for (int i = 0; i < cam.image_width; ++i) {
             const int pixel_index = j * cam.image_width + i;
@@ -1678,70 +1662,46 @@ void render_scene(SceneConfig& scene_cfg) {
         }
     }
 
-
+    // ------------------------------------------------------------------------
+    // CLEANUP MEMORY IN DEPENDENCY ORDER
+    // ------------------------------------------------------------------------
     std::cerr << "Cleaning up memory...\n";
 
-    // Destroy objects in dependency order:
-    // BVH/world -> primitives -> prototypes -> materials -> textures.
     free_world_kernel<<<1, 1>>>(
-        d_raw_list,
-        d_materials,
-        d_textures,
-        d_prototypes,       
-        d_world,
-        num_objects,
-        num_prototypes,
-        max_materials,
-        max_textures
-    );
-
+        d_raw_list, d_materials, d_textures, d_prototypes,
+        d_world, num_objects, num_prototypes, max_materials, max_textures);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
 
-
-    // Free scene image buffers. This must happen after deleting texture objects,
-    // since image_texture objects hold pointers to these device allocations.
     release_scene_images(scene_cfg);
 
     if (d_scene_images != nullptr) {
         checkCudaErrors(cudaFree(d_scene_images));
     }
-
-
-    // Free pipeline buffers. flat_bvh is assumed to be non-owning with respect
-    // to d_flat_nodes and d_ordered_prims, so they are freed here after d_world.
-    if (d_flat_nodes != nullptr) {
-        checkCudaErrors(cudaFree(d_flat_nodes));
+    if (d_flatnodes != nullptr) {
+        checkCudaErrors(cudaFree(d_flatnodes));
     }
-
     if (d_ordering != nullptr) {
         checkCudaErrors(cudaFree(d_ordering));
     }
-
     if (d_ordered_prims != nullptr) {
         checkCudaErrors(cudaFree(d_ordered_prims));
     }
-
     if (d_boxes != nullptr) {
         checkCudaErrors(cudaFree(d_boxes));
     }
-
     if (d_obj_count != nullptr) {
         checkCudaErrors(cudaFree(d_obj_count));
     }
-
     if (d_proto_count != nullptr) {
         checkCudaErrors(cudaFree(d_proto_count));
     }
-
     if (d_raw_list != nullptr) {
         checkCudaErrors(cudaFree(d_raw_list));
     }
-
     if (d_prototypes != nullptr) {
         checkCudaErrors(cudaFree(d_prototypes));
     }
-
     if (d_materials != nullptr) {
         checkCudaErrors(cudaFree(d_materials));
     }
@@ -1751,35 +1711,24 @@ void render_scene(SceneConfig& scene_cfg) {
     if (d_light_count != nullptr) {
         checkCudaErrors(cudaFree(d_light_count));
     }
-
     if (d_textures != nullptr) {
         checkCudaErrors(cudaFree(d_textures));
     }
-
     if (d_world_ptr != nullptr) {
         checkCudaErrors(cudaFree(d_world_ptr));
     }
-
     if (d_accum_fb != nullptr) {
         checkCudaErrors(cudaFree(d_accum_fb));
     }
-
     if (d_fb != nullptr) {
         checkCudaErrors(cudaFree(d_fb));
     }
-    const auto total_end =
-    std::chrono::steady_clock::now();
 
+    const auto total_end = std::chrono::steady_clock::now();
     const double total_seconds =
-        std::chrono::duration<double>(
-            total_end - total_start
-        ).count();
+        std::chrono::duration<double>(total_end - total_start).count();
 
-    std::cerr
-        << "Total pipeline time: "
-        << total_seconds
-        << " s\n";
-
+    std::cerr << "Total pipeline time: " << total_seconds << " s\n";
     std::cerr << "Done.\n";
 }
 
@@ -1803,7 +1752,7 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    if (scene_id < 1 || scene_id > 5) {
+    if (scene_id < 1 || scene_id > 7) {
         std::cerr << "Error: scene_id must be between 1 and 5 inclusive.\n";
         return EXIT_FAILURE;
     }
@@ -1829,7 +1778,12 @@ int main(int argc, char* argv[]) {
         case 5:
             setup_scene_table_earth(cfg);
             break;
-
+        case 6:
+            setup_scene_spheres_benchmark(cfg);
+            break;
+        case 7:
+            setup_scene_cornell_glass(cfg);
+            break;
         default:
             std::cerr
                 << "Unknown scene_id: "
