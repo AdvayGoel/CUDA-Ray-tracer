@@ -175,6 +175,7 @@ public:
         return hit_anything;
     }
 
+    // Checks if a shadow ray hits the scene
     __device__ bool occluded(const ray& r, interval ray_t) const {
         float inv_dir_x = 1.0f / r.direction().x();
         float inv_dir_y = 1.0f / r.direction().y();

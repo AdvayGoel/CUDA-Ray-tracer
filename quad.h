@@ -20,7 +20,6 @@ class quad : public hittable {
         
         HD aabb bounding_box() const override { return bbox; };
 
-        // Find algorithm in Notes
         __device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
             float denom = dot(normal, r.direction());
 

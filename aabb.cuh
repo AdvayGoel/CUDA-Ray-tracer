@@ -33,7 +33,6 @@ class aabb {
             else return x;
         }
 
-        // Find algorithm in Notes
         HD bool hit(const ray& r, interval ray_t, float inv_dir_x, float inv_dir_y, float inv_dir_z) const {
             // takes in reciprocal of the direction to prevent repeated floating point division
             // uses slab method for determining intersection

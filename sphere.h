@@ -69,7 +69,6 @@ sphere : public hittable {
     }
 
     private:
-        // Find algorithm in Notes
         __device__ static void get_sphere_uv(const point3& p, float& u, float& v) {
         // p: a given point on the sphere of radius one, centered at the origin.
         // u: returned value [0,1] of angle around the Y axis from X=-1.

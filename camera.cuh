@@ -54,8 +54,6 @@ class camera {
             pixel_delta_u = viewport_u / image_width;
             pixel_delta_v = viewport_v / image_height;
 
-            // Calculate the camera lense dimensions
-
             // Calculate the location of the upper left pixel.
             vec3 viewport_upper_left =
                 center - (focal_length * w) - viewport_u/2 - viewport_v/2;
@@ -87,7 +85,7 @@ __device__ inline float power_heuristic(float p_f, float p_g) {
     return (denom > 0.0f) ? (f2 / denom) : 0.0f;
 }
 
-__device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, const flat_bvh* world, hittable* const* d_lights, int num_lights, unsigned int* local_rand_state) {
+__device__ static colour estimate_direct_light(const hit_record& rec, const vec3& wo, const flat_bvh* world, hittable* const* d_lights, int num_lights, unsigned int* local_rand_state) {
     constexpr float epsilon = 0.001f;
     if (num_lights <= 0 || !rec.mat->supports_nee()) {
         return colour(0.0f, 0.0f, 0.0f);
@@ -113,7 +111,7 @@ __device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, c
         // return black to avoid divide by 0 error
         return colour(0.0f, 0.0f, 0.0f);
     }
-    // Normalissed vector pointing from the hitpoint to light sample
+    // Normalised vector pointing from the hitpoint to light sample
     vec3 wi = to_light / distance;
 
     // How much of the receiving surface faces the light
@@ -159,7 +157,7 @@ __device__ colour estimate_direct_light(const hit_record& rec, const vec3& wo, c
 
 
 
-__device__ float compute_light_pdf(
+__device__ static float compute_light_pdf(
     const hit_record& rec,
     const point3& prev_origin,
     hittable* const* d_lights,
@@ -167,8 +165,7 @@ __device__ float compute_light_pdf(
 ) {
     if (num_lights <= 0) return 0.0f;
 
-    // 1. Verify the hit object is actually a registered NEE light
-    // (Requires rec.object to be set in hit_record during world->hit)
+    //  Verify the hit object is NEE light
     const hittable* hit_light = nullptr;
     for (int i = 0; i < num_lights; ++i) {
         if (d_lights[i] == rec.object) {
@@ -178,25 +175,22 @@ __device__ float compute_light_pdf(
     }
     if (!hit_light) return 0.0f;
 
-    // 2. Vector pointing from the previous surface vertex to the light hit point
+    //  Vector pointing from the previous surface vertex to the light hit point
     vec3 d_vec = rec.p - prev_origin;
     float dist_sq = d_vec.length_squared();
     if (dist_sq < 1e-8f) return 0.0f;
 
     vec3 dir = unit_vector(d_vec);
 
-    // 3. Cosine of angle between incoming ray and lights emitter's normal
+    // Cosine of angle between incoming ray and lights emitter's normal
     // If the light is one-sided, hits from behind cannot be sampled by NEE
     float cos_theta_light = dot(hit_light->geometric_normal(rec.p), -dir);
     if (cos_theta_light <= 0.0f) return 0.0f;
 
-    // 4. Area of the light
-    float area = hit_light->area_val();
+        float area = hit_light->area_val();
     if (area <= 0.0f) return 0.0f;
 
-    // 5. Convert area PDF to solid-angle PDF:
-    // p_area = 1.0f / (num_lights * area)
-    // p_omega = p_area * (dist_sq / cos_theta_light)
+    // Convert area PDF to angle PDF
     return (dist_sq / (num_lights * area * cos_theta_light));
 }
 
@@ -248,7 +242,7 @@ __device__ colour ray_colour(
         vec3 wo = -unit_vector(cur_ray.direction());
 
         // -----------------------------------------------------------------
-        // 2. NEE: explicitly sample one light connection at this vertex
+        // explicitly sample one light connection at this vertex
         // -----------------------------------------------------------------
         bool use_nee =
             rec.mat->supports_nee() &&
@@ -265,7 +259,7 @@ __device__ colour ray_colour(
             radiance += cur_attenuation * direct_light;
         } 
         // -----------------------------------------------------------------
-        // 3. Ordinary BSDF path continuation
+        // Ordinary BSDF path
         // -----------------------------------------------------------------
         ray scattered;
         colour attenuation;
@@ -281,7 +275,6 @@ __device__ colour ray_colour(
             float mis_weight = 1.0f;
             if (previous_used_nee) {
                 // Compute the chance that the previous shadow ray hit this light
-
                 float p_light = compute_light_pdf(rec, prev_origin, d_lights, num_lights);
                 mis_weight = power_heuristic(prev_bsdf_pdf, p_light);
             }
@@ -291,7 +284,7 @@ __device__ colour ray_colour(
         }
 
         // -----------------------------------------------------------------
-        // 4. Update ordinary-path throughput and continue
+        // Update ordinary-path throughput and continue
         // -----------------------------------------------------------------
         cur_attenuation = cur_attenuation * attenuation;
         cur_ray = scattered;
@@ -303,7 +296,7 @@ __device__ colour ray_colour(
         prev_bsdf_pdf = rec.mat->scattering_pdf(wo, scattered.direction(), rec);
 
         // -----------------------------------------------------------------
-        // 5. Russian roulette: only terminate future path continuation
+        // Russian roulette: only terminate future path continuation
         // -----------------------------------------------------------------
         if (depth >= RUSSIAN_ROULETTE_START_DEPTH) {
             float survive_probability = fmaxf(

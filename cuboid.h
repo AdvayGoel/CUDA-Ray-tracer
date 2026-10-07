@@ -31,7 +31,6 @@ cuboid : public hittable {
                 fabsf(rotation(1, 0)) * local_extents.x() + fabsf(rotation(1, 1)) * local_extents.y() + fabsf(rotation(1, 2)) * local_extents.z(),
                 fabsf(rotation(2, 0)) * local_extents.x() + fabsf(rotation(2, 1)) * local_extents.y() + fabsf(rotation(2, 2)) * local_extents.z()
             );
-
             return aabb(world_center - world_extents, world_center + world_extents);
         }
 
@@ -72,7 +71,6 @@ cuboid : public hittable {
 
         }
 
-        // Find algorithm in Notes
         __device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
 
             ray r_local = ray(inverse_rotation * (r.origin() - center), inverse_rotation * r.direction());

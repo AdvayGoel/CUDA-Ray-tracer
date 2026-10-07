@@ -249,8 +249,9 @@ __device__ void create_snowman_kernel(
 
     // 4. Arms using Prototypes + Transform Instancing
     // A single base arm branch centered at origin:
+
     d_prototypes[proto_idx++] = new cuboid(
-        point3(0.0f, 0.0f, 0.0f),
+        point3(0.0f, 0.0f, 0.55f),
         0.12f,
         0.12f,
         1.10f,
@@ -261,19 +262,20 @@ __device__ void create_snowman_kernel(
     // Instanced Right Arm
     d_raw_list[obj_idx++] = new transform(
         d_prototypes[0],
-        vec3(0.0f, 2.70f, 1.25f),
-        degrees_to_radians(-35.0f),
-        degrees_to_radians(-20.0f),
+        vec3(0.0f, 2.70f, 0.75f),
+        degrees_to_radians(-20.0f), // Pitch / elevation
+        degrees_to_radians(15.0f),  // Yaw / angle forward
         0.0f
     );
+
 
 
     // Instanced Left Arm
     d_raw_list[obj_idx++] = new transform(
         d_prototypes[0],
-        vec3(0.0f, 2.70f, -1.25f),
-        degrees_to_radians(-25.0f),
-        degrees_to_radians(15.0f),
+        vec3(0.0f, 2.70f, -0.75f),
+        degrees_to_radians(-20.0f),
+        degrees_to_radians(180.0f - 15.0f), // Flip direction along -Z
         0.0f
     );
 
@@ -466,7 +468,7 @@ __device__ void create_quads(
     ); // back wall
 
 
-    // Base box prototype centered at origin: size (200, 300, 200)
+    // Base box prototype centered at origin
     d_prototypes[proto_idx++] = new cuboid(
         point3(0.0f, 0.0f, 0.0f),
         200.0f,
@@ -687,7 +689,7 @@ __device__ void create_table_earth_scene(
         d_materials[2]
     );
 
-    // 5. Thin Glass Window Pane (Width = 6.0m, Height = 2.8m, Thickness = 0.02m)
+    // 5. Thin Glass Window Pane (Width = 5.98m, Height = 2.78m, Thickness = 0.02m)
     // Center: (0.0f, 2.4f, -11.0f). Extends from Z = -11.01 to -10.99
     // Fits flush inside the wall opening so side faces are hidden inside the wall!
     d_raw_list[obj_idx++] = new cuboid(
@@ -796,7 +798,7 @@ __device__ void create_table_earth_scene(
     // --------------------------------------------------------------------
     // 3. Small Earth Sphere (Foreground Edge)
     // Radius = 0.22m, resting on y = 1.00 -> Center at y = 1.22
-    // Placed right near the table corner at (0.00, 1.22, 0.70)
+    // Placed right near the table corner at (-1.90, 1.22, -1.15)
     // --------------------------------------------------------------------
     d_raw_list[obj_idx++] = new transform(
         d_prototypes[0],
@@ -1200,6 +1202,8 @@ __global__ void resolve_framebuffer_kernel(
 }
 
 
+
+
 // ----------------------------------------------------------------------------
 // SCENE CONFIGURATION STRUCT
 // ----------------------------------------------------------------------------
@@ -1222,7 +1226,6 @@ struct SceneConfig {
     std::vector<ImageMetadata> loaded_images;
 };
 
-
 void release_scene_images(SceneConfig& cfg) {
     for (ImageMetadata& meta : cfg.loaded_images) {
         if (meta.pixels != nullptr) {
@@ -1237,7 +1240,6 @@ void release_scene_images(SceneConfig& cfg) {
 
     cfg.loaded_images.clear();
 }
-
 
 void upload_required_image(
     SceneConfig& cfg,
@@ -1266,6 +1268,7 @@ void upload_required_image(
         3
     });
 }
+
 
 
 void setup_scene_snowman(SceneConfig& cfg) {
@@ -1339,7 +1342,7 @@ void setup_scene_table_earth(SceneConfig& cfg) {
     cfg.name = "table_earth_room";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1200;
-    cfg.samples_per_pixel = 500;
+    cfg.samples_per_pixel = 200;
     cfg.max_depth = 50;
     cfg.background = colour(0.20f, 0.46f, 0.66f);
 
@@ -1733,11 +1736,8 @@ void render_scene(SceneConfig& scene_cfg) {
 }
 
 
-// ----------------------------------------------------------------------------
-// MAIN
-// ----------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
-    int scene_id = 1; // default scene
+    int scene_id = 5; // default scene
 
     if (argc == 2) {
         try {

@@ -54,7 +54,10 @@ public:
     __device__ vec3 geometric_normal(const point3 at) const override {
         vec3 local_norm = object->geometric_normal(rotation.transpose() * (at - offset));
         return rotation * local_norm;
+    }
 
+    __device__ float area_val() const override {
+        return object->area_val();
     }
 
 private:

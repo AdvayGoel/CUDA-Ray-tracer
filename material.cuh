@@ -128,7 +128,7 @@ public:
         vec3 unit_direction = unit_vector(r_in.direction());
 
 
-        // 1. If refractive index is 1.0, there is no boundary: transmit straight through
+        //  If refractive index is 1.0, there is no boundary: transmit straight through
         if (fabsf(refraction_index - 1.0f) < 1e-4f) {
             scattered = ray(rec.p, unit_direction);
             return true;
@@ -138,7 +138,7 @@ public:
         float ri = rec.front_face ? (1.0 / refraction_index) : refraction_index;
 
 
-        // 2. Clamp cosine strictly between 0.0 and 1.0
+        // Clamp cosine strictly between 0.0 and 1.0
         float cos_theta = fminf(fmaxf(dot(-unit_direction, rec.normal), 0.0f), 1.0f);
         float sin_theta = sqrtf(fmaxf(0.0f, 1.0f - cos_theta * cos_theta));
 
@@ -147,7 +147,7 @@ public:
         vec3 direction;
 
 
-        // 3. Evaluate reflectance with safe inputs and verified RNG
+        // Evaluate reflectance with safe inputs and verified RNG
         float rng_val = rand_float(local_rand_state);
         if (cannot_refract || reflectance(cos_theta, ri) > rng_val) {
             direction = reflect(unit_direction, rec.normal);
@@ -163,8 +163,7 @@ public:
 
 private:
     float refraction_index;
-   
-    // Find algorithm in Notes
+
     __device__ static float reflectance(float cosine, float refraction_index) {
         float r0 = (1.0f - refraction_index)
                  / (1.0f + refraction_index);

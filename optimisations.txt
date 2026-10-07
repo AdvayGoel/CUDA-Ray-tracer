@@ -14,3 +14,8 @@ Replace curandState with unsigned int* to reduce overhead
 
 Traversing closer child node first. Account for ray direction when deciding which aabb to check next in BVH logic. 
     6s down to 5s
+
+
+added russian roulette termination to keep the effect of high depth ray bouncing while reducing the total number of bounces.
+
+Use NCU to determine what the bottlenecks in render_subpass_kernel is, found it has high warp-divergence
