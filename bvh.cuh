@@ -13,6 +13,46 @@
 using std::shared_ptr;
 using std::vector;
 
+// Explicit stack to reduce memory spilling
+struct RegisterStack8 {
+    int s0, s1, s2, s3, s4, s5, s6, s7;
+    int ptr = 0;
+
+    __device__ __forceinline__ void push(int val) {
+        if (ptr < 8) {
+            switch (ptr) {
+                case 0: s0 = val; break;
+                case 1: s1 = val; break;
+                case 2: s2 = val; break;
+                case 3: s3 = val; break;
+                case 4: s4 = val; break;
+                case 5: s5 = val; break;
+                case 6: s6 = val; break;
+                case 7: s7 = val; break;
+            }
+            ptr++;
+        }
+    }
+
+    __device__ __forceinline__ int pop() {
+        ptr--;
+        switch (ptr) {
+            case 0: return s0;
+            case 1: return s1;
+            case 2: return s2;
+            case 3: return s3;
+            case 4: return s4;
+            case 5: return s5;
+            case 6: return s6;
+            case 7: return s7;
+            default: return -1;
+        }
+    }
+
+    __device__ __forceinline__ bool empty() const {
+        return ptr <= 0;
+    }
+};
 
 struct alignas(32) FlatBVHNode {
     // alligns each node in cache
@@ -121,31 +161,28 @@ public:
     __device__ flat_bvh(const FlatBVHNode* nodes, hittable* const* prims) : d_nodes(nodes), d_primitives(prims) {
         root_bbox = d_nodes[0].bbox;
     }
-    // Uses slab method
+    // Uses slab method and push suprresion to reduce stack size
     __device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
         float inv_dir_x = 1.0f / r.direction().x();
         float inv_dir_y = 1.0f / r.direction().y();
-        float inv_dir_z = 1.0f / r.direction().z();       
-        int stack[16];
-        int stack_ptr = 0;
+        float inv_dir_z = 1.0f / r.direction().z();
 
-        stack[stack_ptr++] = 0;
+        RegisterStack8 stack;
 
+        int node_idx = 0; // Start at root directly
         bool hit_anything = false;
         float closest = ray_t.max;
 
-        while (stack_ptr > 0) {
-            int node_idx = stack[--stack_ptr]; // pop next index of the stack
+        // Test root bounding box once before starting
+        if (!d_nodes[0].bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z)) {
+            return false;
+        }
+
+        while (node_idx != -1) {
             const FlatBVHNode& node = d_nodes[node_idx];
 
-            if (!node.bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z)) {
-                // If this nodex bbox wasn't hit go to the next
-                continue;
-            }
-
             if (node.num_primitives > 0) {
-                // Leaf node, check if primitives get hit
-
+                // Leaf node: intersect primitives
                 for (int i = 0; i < node.num_primitives; i++) {
                     int prim_idx = node.primitive_offset + i;
                     hit_record temp_rec;
@@ -157,63 +194,99 @@ public:
                         rec = temp_rec;
                     }
                 }
+                // Pop the next node from the stack
+                node_idx = !stack.empty() ? stack.pop() : -1;
             } else {
-                // Interior Node
-                // If ray is in negative direction then the right object gets hit first so check that first.
-        
+                // Interior node: determine child indices
+                int left_child = node_idx + 1;
+                int right_child = node.second_child_offset;
+
+                // Determine near and far child based on ray direction
                 bool dir_is_neg = (r.direction()[node.axis] < 0.0f);
-                if (dir_is_neg) {
-                    stack[stack_ptr++] = node_idx + 1;             // near is right child
-                    stack[stack_ptr++] = node.second_child_offset; // pop right first
+                int near_child = dir_is_neg ? right_child : left_child;
+                int far_child  = dir_is_neg ? left_child  : right_child;
+
+                // Test intersection against both children
+                bool hit_near = d_nodes[near_child].bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z);
+                bool hit_far  = d_nodes[far_child].bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z);
+
+                if (hit_near && hit_far) {
+                    // Both hit: push the far child, traverse into the near child
+                    stack.push(far_child);
+                    node_idx = near_child;
+                } else if (hit_near) {
+                    // Only near child hit: descend without touching the stack
+                    node_idx = near_child;
+                } else if (hit_far) {
+                    // Only far child hit: descend without touching the stack
+                    node_idx = far_child;
                 } else {
-                    stack[stack_ptr++] = node.second_child_offset;
-                    stack[stack_ptr++] = node_idx + 1;             // pop left first
+                    // Neither hit: pop from the stack
+                    node_idx = !stack.empty() ? stack.pop() : -1;
                 }
             }
         }
 
         return hit_anything;
     }
-
     // Checks if a shadow ray hits the scene
     __device__ bool occluded(const ray& r, interval ray_t) const {
         float inv_dir_x = 1.0f / r.direction().x();
         float inv_dir_y = 1.0f / r.direction().y();
-        float inv_dir_z = 1.0f / r.direction().z();       
-        int stack[16];
-        int stack_ptr = 0;
+        float inv_dir_z = 1.0f / r.direction().z();
 
-        stack[stack_ptr++] = 0;
+        RegisterStack8 stack;
 
-        while (stack_ptr > 0) {
-            int node_idx = stack[--stack_ptr]; // pop next index of the stack
+        int node_idx = 0; // Start at root directly
+        float closest = ray_t.max;
+
+        // Test root bounding box once before starting
+        if (!d_nodes[0].bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z)) {
+            return false;
+        }
+
+        while (node_idx != -1) {
             const FlatBVHNode& node = d_nodes[node_idx];
 
-            if (!node.bbox.hit(r, ray_t, inv_dir_x, inv_dir_y, inv_dir_z)) {
-                // If this nodex bbox wasn't hit go to the next
-                continue;
-            }
-
             if (node.num_primitives > 0) {
-                // Leaf node, check if primitives get hit
-                hit_record temp_rec;
+                // Leaf node: intersect primitives
                 for (int i = 0; i < node.num_primitives; i++) {
                     int prim_idx = node.primitive_offset + i;
-                    if (d_primitives[prim_idx]->hit(r, ray_t, temp_rec)) {
+                    hit_record temp_rec;
+                    hittable* primitive = d_primitives[prim_idx];
+                    if (primitive->hit(r, interval(ray_t.min, closest), temp_rec)) {
                         return true;
                     }
                 }
+                // Pop the next node from the stack
+                node_idx = !stack.empty() ? stack.pop() : -1;
             } else {
-                // Interior Node
-                // If ray is in negative direction then the right object gets hit first so check that first.
-        
+                // Interior node: determine child indices
+                int left_child = node_idx + 1;
+                int right_child = node.second_child_offset;
+
+                // Determine near and far child based on ray direction
                 bool dir_is_neg = (r.direction()[node.axis] < 0.0f);
-                if (dir_is_neg) {
-                    stack[stack_ptr++] = node_idx + 1;             // near is right child
-                    stack[stack_ptr++] = node.second_child_offset; // pop right first
+                int near_child = dir_is_neg ? right_child : left_child;
+                int far_child  = dir_is_neg ? left_child  : right_child;
+
+                // Test intersection against both children
+                bool hit_near = d_nodes[near_child].bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z);
+                bool hit_far  = d_nodes[far_child].bbox.hit(r, interval(ray_t.min, closest), inv_dir_x, inv_dir_y, inv_dir_z);
+
+                if (hit_near && hit_far) {
+                    // Both hit: push the far child, traverse into the near child
+                    stack.push(far_child);
+                    node_idx = near_child;
+                } else if (hit_near) {
+                    // Only near child hit: descend without touching the stack
+                    node_idx = near_child;
+                } else if (hit_far) {
+                    // Only far child hit: descend without touching the stack
+                    node_idx = far_child;
                 } else {
-                    stack[stack_ptr++] = node.second_child_offset;
-                    stack[stack_ptr++] = node_idx + 1;             // pop left first
+                    // Neither hit: pop from the stack
+                    node_idx = !stack.empty() ? stack.pop() : -1;
                 }
             }
         }
