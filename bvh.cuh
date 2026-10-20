@@ -8,10 +8,13 @@
 #include <cuda_runtime.h>
 
 #include "aabb.cuh"
+#include "mat3.cuh"
 #include "hittable.h"
 
 using std::shared_ptr;
 using std::vector;
+
+
 
 // Explicit stack to reduce memory spilling
 struct RegisterStack8 {
@@ -152,17 +155,17 @@ class BVHBuilder {
         }
 };
 
-class flat_bvh : public hittable {
+class flat_bvh {
 public:
     const FlatBVHNode* d_nodes;       // Flat array of BVH nodes in device memory
-    hittable* const*   d_primitives;  // Array of scene primitives
+    const gpu_primitive *d_primitives;  // Array of scene primitives
     aabb               root_bbox;     // Bounding box of the entire scene
 
-    __device__ flat_bvh(const FlatBVHNode* nodes, hittable* const* prims) : d_nodes(nodes), d_primitives(prims) {
+    __device__ flat_bvh(const FlatBVHNode* nodes, const gpu_primitive *prims) : d_nodes(nodes), d_primitives(prims) {
         root_bbox = d_nodes[0].bbox;
     }
     // Uses slab method and push suprresion to reduce stack size
-    __device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+    __device__ bool hit(const ray& r, interval ray_t, hit_record& rec) const {
         float inv_dir_x = 1.0f / r.direction().x();
         float inv_dir_y = 1.0f / r.direction().y();
         float inv_dir_z = 1.0f / r.direction().z();
@@ -186,11 +189,11 @@ public:
                 for (int i = 0; i < node.num_primitives; i++) {
                     int prim_idx = node.primitive_offset + i;
                     hit_record temp_rec;
-                    hittable* primitive = d_primitives[prim_idx];
-                    if (primitive->hit(r, interval(ray_t.min, closest), temp_rec)) {
+                    const gpu_primitive& primitive = d_primitives[prim_idx];
+                    if (primitive.hit(r, interval(ray_t.min, closest), temp_rec)) {
                         hit_anything = true;
-                        temp_rec.object = primitive;
                         closest = temp_rec.t;
+                        temp_rec.object = primitive.object;
                         rec = temp_rec;
                     }
                 }
@@ -253,8 +256,8 @@ public:
                 for (int i = 0; i < node.num_primitives; i++) {
                     int prim_idx = node.primitive_offset + i;
                     hit_record temp_rec;
-                    hittable* primitive = d_primitives[prim_idx];
-                    if (primitive->hit(r, interval(ray_t.min, closest), temp_rec)) {
+                    const gpu_primitive& primitive = d_primitives[prim_idx];
+                    if (primitive.hit(r, interval(ray_t.min, closest), temp_rec)) {
                         return true;
                     }
                 }
@@ -293,7 +296,7 @@ public:
 
         return false;
     }
-    HD aabb bounding_box() const override {
+    HD aabb bounding_box() const {
         return root_bbox;
     }
 };

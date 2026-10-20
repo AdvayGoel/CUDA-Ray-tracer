@@ -8,13 +8,7 @@ private:
     float m[9]; // Row-major: elements [0..2], [3..5], [6..8]
 
 public:
-    // Default constructor (identity matrix)
-    __host__ __device__ mat3() {
-        m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f;
-        m[3] = 0.0f; m[4] = 1.0f; m[5] = 0.0f;
-        m[6] = 0.0f; m[7] = 0.0f; m[8] = 1.0f;
-    }
-
+    __host__ __device__ mat3() = default;
     // Explicit 9-element constructor
     __host__ __device__ mat3(
         float m00, float m01, float m02,

@@ -66,26 +66,90 @@ public:
     HostProxyPrimitive(int id, const aabb& box)
         : id(id), box(box) {}
 
-    __device__ bool hit(
-        const ray&,
-        interval,
-        hit_record&
-    ) const override {
-        return false;
-    }
 
     __device__ __host__ aabb bounding_box() const override {
         return box;
     }
+
+    // Dummy return value
+    __device__ PrimitiveType get_type() const override { return PrimitiveType::Sphere; }
+
 };
 
-
+__device__ inline gpu_primitive make_gpu_primitive(hittable* obj) {
+    gpu_primitive prim;
+    prim.object = obj;
+    switch (obj->get_type()) {
+        case PrimitiveType::Sphere: {
+            sphere* s = static_cast<sphere*>(obj);
+            prim.type = PrimitiveType::Sphere;
+            prim.mat  = s->mat;
+            prim.emission = (s->mat != nullptr) ? s->mat->emitted() : colour(0.0f, 0.0f, 0.0f);
+            prim.data.sphere.center = s->data.center;
+            prim.data.sphere.radius = s->data.radius;
+            break;
+        }
+        case PrimitiveType::Quad: {
+            quad* q = static_cast<quad*>(obj);
+            prim.type = PrimitiveType::Quad;
+            prim.mat  = q->mat;
+            prim.emission = (q->mat != nullptr) ? q->mat->emitted() : colour(0.0f, 0.0f, 0.0f);
+            prim.data.quad.Q      = q->data.Q;
+            prim.data.quad.u      = q->data.u;
+            prim.data.quad.v      = q->data.v;
+            prim.data.quad.w      = q->data.w;
+            prim.data.quad.normal = q->data.normal;
+            prim.data.quad.D      = q->data.D;
+            prim.data.quad.area   = q->data.area;
+            break;
+        }
+        case PrimitiveType::Cuboid: {
+            cuboid* c = static_cast<cuboid*>(obj);
+            prim.type = PrimitiveType::Cuboid;
+            prim.mat  = c->mat;
+            prim.emission = (c->mat != nullptr) ? c->mat->emitted() : colour(0.0f, 0.0f, 0.0f);
+            prim.data.cuboid.p_min = c->data.p_min;
+            prim.data.cuboid.p_max = c->data.p_max;
+            prim.data.cuboid.rotation = c->data.rotation;
+            prim.data.cuboid.inverse_rotation = c->data.inverse_rotation;
+            prim.data.cuboid.center = c->data.center;
+            prim.data.cuboid.area   = c->data.area;
+            break;
+        }
+        case PrimitiveType::Transform: {
+            transform* t = static_cast<transform*>(obj);
+            hittable* child = t->object;
+            gpu_material* mat = t->mat;
+            if (child->get_type() == PrimitiveType::Cuboid) {
+                cuboid* c = static_cast<cuboid*>(child);
+                prim.type = PrimitiveType::Cuboid;
+                prim.data.cuboid.p_min = c->data.p_min;
+                prim.data.cuboid.p_max = c->data.p_max;
+                prim.mat = (mat != nullptr) ? mat : c->mat;
+                prim.emission = (prim.mat != nullptr) ? prim.mat->emitted() : colour(0.0f, 0.0f, 0.0f);
+                prim.data.cuboid.rotation = t->rotation * c->data.rotation;
+                prim.data.cuboid.inverse_rotation = c->data.inverse_rotation * t->rotation.transpose();
+                prim.data.cuboid.area = c->data.area;
+                prim.data.cuboid.center = t->offset + t->rotation * c->data.center;
+            } else if (child->get_type() == PrimitiveType::Sphere) {
+                sphere* s = static_cast<sphere*>(child);
+                prim.type = PrimitiveType::Sphere;
+                prim.mat = (mat != nullptr) ? mat : s->mat;
+                prim.emission = (prim.mat != nullptr) ? prim.mat->emitted() : colour(0.0f, 0.0f, 0.0f);
+                prim.data.sphere.center = t->offset + t->rotation * s->data.center;
+                prim.data.sphere.radius = s->data.radius;
+            }
+            break;
+        }
+    }
+    return prim;
+}
 // ----------------------------------------------------------------------------
 // SCENE SETUP FUNCTIONS (CALLED FROM KERNEL)
 // ----------------------------------------------------------------------------
 __device__ void create_light_box(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -113,10 +177,10 @@ __device__ void create_light_box(
 
 
     // Materials
-    d_materials[mat_idx++] = new diffuse_light(
+    d_materials[mat_idx++] = new gpu_material(DiffuseLightData{
         colour(4.0f, 4.0f, 4.0f)
-    );
-    d_materials[mat_idx++] = new lambertian(d_textures[0]);
+    });
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[0]});
 
     // Primitives
     cuboid *light = new cuboid(point3(0.5, 0.5, 0.5), 0.5, 0.5, 0.5, d_materials[0]);
@@ -143,7 +207,7 @@ __device__ void create_light_box(
 
 __device__ void create_snowman_kernel(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -185,20 +249,20 @@ __device__ void create_snowman_kernel(
 
 
     // Materials
-    d_materials[mat_idx++] = new lambertian(d_textures[0]); // 0: ground
-    d_materials[mat_idx++] = new lambertian(d_textures[1]); // 1: snow
-    d_materials[mat_idx++] = new metal(
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[0]}); // 0: ground
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[1]}); // 1: snow
+    d_materials[mat_idx++] = new gpu_material(MetalData{
         colour(0.12f, 0.12f, 0.12f),
         0.1f
-    ); // 2: hat
+    }); // 2: hat
 
-    d_materials[mat_idx++] = new lambertian(d_textures[2]); // 3: wood
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[2]}); // 3: wood
 
-    d_materials[mat_idx++] = new diffuse_light(
+    d_materials[mat_idx++] = new gpu_material(DiffuseLightData{
         colour(0.95f, 0.45f, 0.05f)
-    ); // 4: carrot
+    }); // 4: carrot
 
-    d_materials[mat_idx++] = new lambertian(d_textures[3]); // 5: coal
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[3]}); // 5: coal
 
 
     // 1. Snowy ground
@@ -336,15 +400,15 @@ __device__ void create_snowman_kernel(
                         + 0.6f * rand_float(&seed)
                 );
 
-                material* mat = nullptr;
+                gpu_material* mat = nullptr;
 
                 if (rand_float(&seed) < 0.5f) {
-                    mat = new dielectric(1.31f);
+                    mat = new gpu_material(DielectricData{1.31f});
                 } else {
-                    mat = new metal(
+                    mat = new gpu_material(MetalData{
                         colour(0.8f, 0.85f, 0.9f),
                         0.05f
-                    );
+                    });
                 }
 
                 d_materials[mat_idx++] = mat;
@@ -370,7 +434,7 @@ __device__ void create_snowman_kernel(
 
 __device__ void create_quads(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -411,13 +475,13 @@ __device__ void create_quads(
 
 
     // Materials
-    d_materials[mat_idx++] = new lambertian(d_textures[0]); // 0: red
-    d_materials[mat_idx++] = new lambertian(d_textures[1]); // 1: white
-    d_materials[mat_idx++] = new lambertian(d_textures[2]); // 2: green
-    d_materials[mat_idx++] = new diffuse_light(
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[0]}); // 0: red
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[1]}); // 1: white
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[2]}); // 2: green
+    d_materials[mat_idx++] = new gpu_material(DiffuseLightData{
         colour(15.0f, 15.0f, 15.0f)
-    ); // 3: light
-    d_materials[mat_idx++] = new lambertian(d_textures[3]); // 4: checker
+    }); // 3: light
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[3]}); // 4: checker
 
 
     // Walls (Cornell Box)
@@ -500,7 +564,7 @@ __device__ void create_quads(
 
 __device__ void create_earth_scene(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -529,7 +593,7 @@ __device__ void create_earth_scene(
         earth_meta.bytes_per_pixel
     );
 
-    d_materials[mat_idx++] = new lambertian(d_textures[0]);
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[0]});
 
     d_raw_list[obj_idx++] = new sphere(
         point3(0.0f, 0.0f, 0.0f),
@@ -549,7 +613,7 @@ __device__ void create_earth_scene(
 
 __device__ void create_table_earth_scene(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -606,20 +670,20 @@ __device__ void create_table_earth_scene(
     // --------------------------------------------------------------------
     // Materials
     // --------------------------------------------------------------------
-    d_materials[mat_idx++] = new lambertian(d_textures[0]); // 0: Earth
-    d_materials[mat_idx++] = new lambertian(d_textures[1]); // 1: Wood Table
-    d_materials[mat_idx++] = new lambertian(d_textures[2]); // 2: Walls & Ceiling
-    d_materials[mat_idx++] = new lambertian(d_textures[3]); // 3: Wooden tiles
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[0]}); // 0: Earth
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[1]}); // 1: Wood Table
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[2]}); // 2: Walls & Ceiling
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[3]}); // 3: Wooden tiles
 
-    d_materials[mat_idx++] = new diffuse_light(
+    d_materials[mat_idx++] = new gpu_material(DiffuseLightData{
         colour(1.9f, 1.8f, 1.6f)
-    ); // 4: Soft Room Light
+    }); // 4: Soft Room Light
 
-    d_materials[mat_idx++] = new diffuse_light(
+    d_materials[mat_idx++] = new gpu_material(DiffuseLightData{
         colour(1.0f, 1.0f, 1.1f)
-    ); // 5: Foreground Key Light
+    }); // 5: Foreground Key Light
 
-    d_materials[mat_idx++] = new dielectric(1.5f); // 6: Glass
+    d_materials[mat_idx++] = new gpu_material(DielectricData{1.5f}); // 6: Glass
 
 
     // Earth prototype
@@ -824,7 +888,7 @@ __device__ void create_table_earth_scene(
 
 __device__ void create_spheres_benchmark_kernel(
     hittable** draw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -847,7 +911,7 @@ __device__ void create_spheres_benchmark_kernel(
     // 1. Ground Plane (Giant Sphere)
     // ------------------------------------------------------------------------
     d_textures[tex_idx] = new solid_colour(colour(0.5f, 0.5f, 0.5f));
-    d_materials[mat_idx] = new lambertian(d_textures[tex_idx]);
+    d_materials[mat_idx] = new gpu_material(LambertianData{d_textures[tex_idx]});
     tex_idx++;
     mat_idx++;
 
@@ -858,21 +922,21 @@ __device__ void create_spheres_benchmark_kernel(
     // 2. Three Central Hero Spheres
     // ------------------------------------------------------------------------
     // Glass sphere
-    d_materials[mat_idx] = new dielectric(1.5f);
+    d_materials[mat_idx] = new gpu_material(DielectricData{1.5f});
     draw_list[obj_idx] = new sphere(point3(0.0f, 1.0f, 0.0f), 1.0f, d_materials[mat_idx]);
     mat_idx++;
     obj_idx++;
 
     // Matte diffuse sphere
     d_textures[tex_idx] = new solid_colour(colour(0.4f, 0.2f, 0.1f));
-    d_materials[mat_idx] = new lambertian(d_textures[tex_idx]);
+    d_materials[mat_idx] = new gpu_material(LambertianData{d_textures[tex_idx]});
     tex_idx++;
     draw_list[obj_idx] = new sphere(point3(-4.0f, 1.0f, 0.0f), 1.0f, d_materials[mat_idx]);
     mat_idx++;
     obj_idx++;
 
     // Smooth metal sphere
-    d_materials[mat_idx] = new metal(colour(0.7f, 0.6f, 0.5f), 0.0f);
+    d_materials[mat_idx] = new gpu_material(MetalData{colour(0.7f, 0.6f, 0.5f), 0.0f});
     draw_list[obj_idx] = new sphere(point3(4.0f, 1.0f, 0.0f), 1.0f, d_materials[mat_idx]);
     mat_idx++;
     obj_idx++;
@@ -898,7 +962,7 @@ __device__ void create_spheres_benchmark_kernel(
             const float dist_metal   = (center - point3( 4.0f, 1.0f, 0.0f)).length();
 
             if (dist_diffuse > 1.25f && dist_glass > 1.25f && dist_metal > 1.25f) {
-                material* mat = nullptr;
+                gpu_material* mat = nullptr;
 
                 if (choose_mat < 0.70f) {
                     // Diffuse
@@ -908,7 +972,7 @@ __device__ void create_spheres_benchmark_kernel(
                         rand_float(&seed) * rand_float(&seed)
                     );
                     d_textures[tex_idx] = new solid_colour(albedo);
-                    mat = new lambertian(d_textures[tex_idx]);
+                    mat = new gpu_material(LambertianData{d_textures[tex_idx]});
                     tex_idx++;
                 } else if (choose_mat < 0.88f) {
                     // Metal
@@ -918,10 +982,10 @@ __device__ void create_spheres_benchmark_kernel(
                         0.5f * (1.0f + rand_float(&seed))
                     );
                     const float fuzz = 0.5f * rand_float(&seed);
-                    mat = new metal(albedo, fuzz);
+                    mat = new gpu_material(MetalData{albedo, fuzz});
                 } else {
                     // Glass
-                    mat = new dielectric(1.5f);
+                    mat = new gpu_material(DielectricData{1.5f});
                 }
 
                 d_materials[mat_idx] = mat;
@@ -945,7 +1009,7 @@ __device__ void create_spheres_benchmark_kernel(
 
 __device__ void create_cornell_glass_kernel(
     hittable** draw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -969,12 +1033,12 @@ __device__ void create_cornell_glass_kernel(
     d_textures[tex_idx++] = new solid_colour(colour(0.12f, 0.45f, 0.15f)); // 2: Green
 
     // Materials
-    d_materials[mat_idx++] = new lambertian(d_textures[0]);                       // 0: Red
-    d_materials[mat_idx++] = new lambertian(d_textures[1]);                       // 1: White
-    d_materials[mat_idx++] = new lambertian(d_textures[2]);                       // 2: Green
-    d_materials[mat_idx++] = new diffuse_light(colour(15.0f, 15.0f, 15.0f));     // 3: Light
-    d_materials[mat_idx++] = new dielectric(1.5f);                                // 4: Glass (dielectric)
-    d_materials[mat_idx++] = new metal(colour(0.85f, 0.85f, 0.85f), 0.0f);        // 5: Mirror metal
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[0]});                       // 0: Red
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[1]});                       // 1: White
+    d_materials[mat_idx++] = new gpu_material(LambertianData{d_textures[2]});                       // 2: Green
+    d_materials[mat_idx++] = new gpu_material(DiffuseLightData{colour(15.0f, 15.0f, 15.0f)});     // 3: Light
+    d_materials[mat_idx++] = new gpu_material(DielectricData{1.5f});                                // 4: Glass (dielectric)
+    d_materials[mat_idx++] = new gpu_material(MetalData{colour(0.85f, 0.85f, 0.85f), 0.0f});        // 5: Mirror metal
 
     // Walls
     draw_list[obj_idx++] = new quad(point3(555, 0, 0), vec3(0, 555, 0), vec3(0, 0, 555), d_materials[2]); // Green
@@ -1014,7 +1078,7 @@ constexpr int SAMPLES_PER_PASS = 8;
 
 __global__ void create_primitives_kernel(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     hittable** d_lights,
@@ -1077,27 +1141,37 @@ __global__ void create_primitives_kernel(
 
 __global__ void create_bvh_world_kernel(
     const FlatBVHNode* d_nodes,
-    hittable** d_raw_list,
+    hittable** draw_list,
     const int* d_ordering,
-    hittable** d_ordered_prims,
+    gpu_primitive* d_gpu_primitives,
     flat_bvh** d_world_ptr,
     int num_objects
 ) {
-    if (threadIdx.x != 0 || blockIdx.x != 0) {
-        return;
-    }
+    if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
     for (int i = 0; i < num_objects; ++i) {
-        d_ordered_prims[i] = d_raw_list[d_ordering[i]];
+        int original_idx = d_ordering[i];
+        d_gpu_primitives[i] = make_gpu_primitive(draw_list[original_idx]);
     }
 
-    *d_world_ptr = new flat_bvh(d_nodes, d_ordered_prims);
+    *d_world_ptr = new flat_bvh(d_nodes, d_gpu_primitives);
 }
 
+__global__ void create_gpu_lights_kernel(
+    hittable* const* d_lights,
+    gpu_primitive* d_gpu_lights,
+    int num_lights
+) {
+    if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+    for (int i = 0; i < num_lights; ++i) {
+        d_gpu_lights[i] = make_gpu_primitive(d_lights[i]);
+    }
+}
 
 __global__ void free_world_kernel(
     hittable** d_raw_list,
-    material** d_materials,
+    gpu_material** d_materials,
     texture** d_textures,
     hittable** d_prototypes,
     flat_bvh* d_world,
@@ -1143,46 +1217,29 @@ __global__ void free_world_kernel(
 // ----------------------------------------------------------------------------
 // OPTIMIZED RENDER KERNEL
 // ----------------------------------------------------------------------------
+__launch_bounds__(256, 3)
 __global__ void render_subpass_kernel(
     colour* accum_fb,
     camera cam,
     flat_bvh* d_world,
     int pass_offset,
     int samples_to_render,
-    hittable** lights,
+    const gpu_primitive* lights,  
     int num_lights
 ) {
     const int i = threadIdx.x + blockIdx.x * blockDim.x;
     const int j = threadIdx.y + blockIdx.y * blockDim.y;
-
-    if (i >= cam.image_width || j >= cam.image_height) {
-        return;
-    }
+    if (i >= cam.image_width || j >= cam.image_height) return;
 
     const int pixel_index = j * cam.image_width + i;
+    unsigned int rng_state = pcg_hash(static_cast<unsigned int>(pixel_index)) ^ pcg_hash(static_cast<unsigned int>(pass_offset));
 
-    unsigned int rng_state = pcg_hash(
-        static_cast<unsigned int>(pixel_index)
-        ^ pcg_hash(static_cast<unsigned int>(pass_offset))
-    );
-
-    colour subpass_color(0.0f, 0.0f, 0.0f);
-
+    colour subpass_colour(0.0f, 0.0f, 0.0f);
     for (int s = 0; s < samples_to_render; ++s) {
         ray r = cam.get_ray(i, j, &rng_state);
-
-        subpass_color += ray_colour(
-            r,
-            d_world,
-            cam.max_depth,
-            &rng_state,
-            cam.background,
-            lights,
-            num_lights
-        );
+        subpass_colour += ray_colour(r, d_world, cam.max_depth, &rng_state, cam.background, lights, num_lights);
     }
-
-    accum_fb[pixel_index] += subpass_color;
+    accum_fb[pixel_index] += subpass_colour;
 }
 
 
@@ -1342,7 +1399,7 @@ void setup_scene_table_earth(SceneConfig& cfg) {
     cfg.name = "table_earth_room";
     cfg.aspect_ratio = 16.0f / 9.0f;
     cfg.image_width = 1200;
-    cfg.samples_per_pixel = 200;
+    cfg.samples_per_pixel = 500;
     cfg.max_depth = 50;
     cfg.background = colour(0.20f, 0.46f, 0.66f);
 
@@ -1430,7 +1487,7 @@ void render_scene(SceneConfig& scene_cfg) {
     const int max_lights = MAX_LIGHTS;
 
     hittable** d_raw_list = nullptr;
-    material** d_materials = nullptr;
+    gpu_material** d_materials = nullptr;
     texture** d_textures = nullptr;
     hittable** d_prototypes = nullptr;
     hittable** d_lights = nullptr;
@@ -1438,11 +1495,12 @@ void render_scene(SceneConfig& scene_cfg) {
     int* d_obj_count = nullptr;
     int* d_proto_count = nullptr;
     int* d_light_count = nullptr;
-    hittable** d_ordered_prims = nullptr;
+    gpu_primitive *d_ordered_prims = nullptr;
+    gpu_primitive* d_gpu_lights    = nullptr;
     flat_bvh** d_world_ptr = nullptr;
 
     checkCudaErrors(cudaMalloc(&d_raw_list, max_objects * sizeof(hittable*)));
-    checkCudaErrors(cudaMalloc(&d_materials, max_materials * sizeof(material*)));
+    checkCudaErrors(cudaMalloc(&d_materials, max_materials * sizeof(gpu_material*)));
     checkCudaErrors(cudaMalloc(&d_textures, max_textures * sizeof(texture*)));
     checkCudaErrors(cudaMalloc(&d_prototypes, max_prototypes * sizeof(hittable*)));
     checkCudaErrors(cudaMalloc(&d_boxes, max_objects * sizeof(aabb)));
@@ -1450,13 +1508,14 @@ void render_scene(SceneConfig& scene_cfg) {
     checkCudaErrors(cudaMalloc(&d_obj_count, sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_proto_count, sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_light_count, sizeof(int)));
-    checkCudaErrors(cudaMalloc(&d_ordered_prims, max_objects * sizeof(hittable*)));
+    checkCudaErrors(cudaMalloc(&d_ordered_prims, max_objects * sizeof(gpu_primitive)));
+    checkCudaErrors(cudaMalloc(&d_gpu_lights,    max_lights  * sizeof(gpu_primitive)));
     checkCudaErrors(cudaMalloc(&d_world_ptr, sizeof(flat_bvh*)));
 
     // Initialise all pointer arrays and counters. This makes scene creation
     // and cleanup safe even if a scene has fewer than the maximum capacities.
     checkCudaErrors(cudaMemset(d_raw_list, 0, max_objects * sizeof(hittable*)));
-    checkCudaErrors(cudaMemset(d_materials, 0, max_materials * sizeof(material*)));
+    checkCudaErrors(cudaMemset(d_materials, 0, max_materials * sizeof(gpu_material*)));
     checkCudaErrors(cudaMemset(d_textures, 0, max_textures * sizeof(texture*)));
     checkCudaErrors(cudaMemset(d_prototypes, 0, max_prototypes * sizeof(hittable*)));
     checkCudaErrors(cudaMemset(d_lights, 0, max_lights * sizeof(hittable*)));
@@ -1567,7 +1626,15 @@ void render_scene(SceneConfig& scene_cfg) {
         std::cerr << "ERROR: Failed to construct GPU BVH world.\n";
         std::exit(EXIT_FAILURE);
     }
+    create_bvh_world_kernel<<<1, 1>>>(d_flatnodes, d_raw_list, d_ordering, d_ordered_prims, d_world_ptr, num_objects);
+    checkCudaErrors(cudaGetLastError());
+    checkCudaErrors(cudaDeviceSynchronize());
 
+    if (num_lights > 0) {
+        create_gpu_lights_kernel<<<1, 1>>>(d_lights, d_gpu_lights, num_lights);
+        checkCudaErrors(cudaGetLastError());
+        checkCudaErrors(cudaDeviceSynchronize());
+    }
     // ------------------------------------------------------------------------
     // KERNEL LAUNCH CONFIGURATION
     // ------------------------------------------------------------------------
@@ -1582,7 +1649,7 @@ void render_scene(SceneConfig& scene_cfg) {
     // WARM-UP PASS (1 sample, untimed - eliminates driver cold-start latency)
     // ------------------------------------------------------------------------
     render_subpass_kernel<<<blocks, threads>>>(
-        d_accum_fb, cam, d_world, 0, 1, d_lights, num_lights);
+        d_accum_fb, cam, d_world, 0, 1, d_gpu_lights, num_lights);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
     checkCudaErrors(cudaMemset(d_accum_fb, 0, fb_size));
@@ -1609,7 +1676,7 @@ void render_scene(SceneConfig& scene_cfg) {
                                           : remaining_samples;
 
         render_subpass_kernel<<<blocks, threads>>>(
-            d_accum_fb, cam, d_world, pass_offset, samples_this_pass, d_lights, num_lights);
+            d_accum_fb, cam, d_world, pass_offset, samples_this_pass, d_gpu_lights, num_lights);
         checkCudaErrors(cudaGetLastError());
 
         remaining_samples -= samples_this_pass;
@@ -1687,6 +1754,9 @@ void render_scene(SceneConfig& scene_cfg) {
     if (d_ordering != nullptr) {
         checkCudaErrors(cudaFree(d_ordering));
     }
+    if (d_gpu_lights != nullptr) {
+        checkCudaErrors(cudaFree(d_gpu_lights));
+    }   
     if (d_ordered_prims != nullptr) {
         checkCudaErrors(cudaFree(d_ordered_prims));
     }
