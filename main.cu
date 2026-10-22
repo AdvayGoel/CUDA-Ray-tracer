@@ -1217,7 +1217,7 @@ __global__ void free_world_kernel(
 // ----------------------------------------------------------------------------
 // OPTIMIZED RENDER KERNEL
 // ----------------------------------------------------------------------------
-__launch_bounds__(256, 3)
+__launch_bounds__(256,3)
 __global__ void render_subpass_kernel(
     colour* accum_fb,
     camera cam,
@@ -1601,6 +1601,7 @@ void render_scene(SceneConfig& scene_cfg) {
     }
 
     std::cerr << "BVH complete: " << flat_nodes.size() << " flat nodes generated.\n";
+
 
     FlatBVHNode* d_flatnodes = nullptr;
     checkCudaErrors(cudaMalloc(&d_flatnodes, flat_nodes.size() * sizeof(FlatBVHNode)));

@@ -125,24 +125,33 @@ __device__ static colour estimate_direct_light(
         return colour(0.0f, 0.0f, 0.0f);
     }
 
-    // Shadow ray visibility test
-    ray shadow_ray(rec.p, wi);
-    bool blocked = world->occluded(shadow_ray, interval(0.001f, distance - 0.001f));
-    if (blocked) {
-        return colour(0.0f, 0.0f, 0.0f);
-    }
-
-    colour f = rec.mat->eval(wo, wi, rec);
+    // Compute the unoccluded contribution before BVH traversal.
     float pdf_total = pdf_select * sample.pdf_area;
+
     if (pdf_total <= 0.0f) {
         return colour(0.0f, 0.0f, 0.0f);
     }
+    colour f = rec.mat->eval(wo, wi, rec);
 
     float p_light = pdf_total * (distance_squared / cos_light);
     float p_bsdf = rec.mat->scattering_pdf(wo, wi, rec);
     float light_weight = power_heuristic(p_light, p_bsdf);
 
-    return light_weight * f * sample.Le * (cos_surface * cos_light) / (distance_squared * pdf_total);
+    colour contribution =
+        light_weight * f * sample.Le * (cos_surface * cos_light)
+        / (distance_squared * pdf_total);
+
+    // Visibility is the final operation.
+    ray shadow_ray(rec.p, wi);
+
+    if (world->occluded(
+            shadow_ray,
+            interval(epsilon, distance - epsilon))) {
+        return colour(0.0f, 0.0f, 0.0f);
+    }
+
+    return contribution;
+
 }
 
 __device__ static float compute_light_pdf(

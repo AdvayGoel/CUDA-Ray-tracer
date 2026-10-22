@@ -1,7 +1,7 @@
 build/
+reports/
 *.o
 *.bin
 .env
-reports/
-.ppm
-.ncu-rep
+*.ppm
+*.ncu-rep
